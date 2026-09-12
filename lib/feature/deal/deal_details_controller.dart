@@ -27,6 +27,13 @@ class DealDetailsController extends GetxController {
   final _loadError = RxnString();
   String? get loadError => _loadError.value;
 
+  /// Whether re-running the fetch could produce a different outcome. A link
+  /// carrying an unparseable id has nothing to retry — offering the action
+  /// anyway gives the user a control that cannot change what they are looking
+  /// at, and because the same message is re-assigned, the Rx does not even
+  /// emit, so the screen does not so much as flicker.
+  bool get canRetry => _routeDealId != null;
+
   final _quantityLeft = RxnInt();
   int? get quantityLeft => _quantityLeft.value;
 

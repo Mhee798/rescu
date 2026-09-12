@@ -278,6 +278,14 @@ show deal 42 — the ticket's requirement is a fully working page, and an error
 screen is explicitly not an acceptable resolution.
 
 **Edge cases**
+- *Unparseable id* (`?id=abc`). No fetch is attempted and the failure message
+  says the link does not point at a deal. The retry action is **not offered** in
+  this case: re-running would hit the same branch and re-assign the identical
+  message, and since `Rx` skips notifying when the value is unchanged
+  (`rx_impl.dart:101`) the screen would not even flicker — a control that
+  provably cannot change anything. Found by review; the inert button was
+  reproduced on device (three taps, no log output, pixel-identical screen)
+  before being removed.
 - *Unknown or non-numeric id.* `getDealById` (`fake_api_service.dart:82-90`)
   has **no injected flakiness at all** — unlike `reserveDeal` and `checkout`,
   which fail on `_mutationCounter % 5 == 3`, it does latency and then either

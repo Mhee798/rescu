@@ -23,7 +23,10 @@ class DealDetailsScreen extends GetView<DealDetailsController> {
         final error = controller.loadError;
         if (error != null) {
           return _WithBackButton(
-            child: _LoadFailure(message: error, onRetry: controller.retry),
+            child: _LoadFailure(
+              message: error,
+              onRetry: controller.canRetry ? controller.retry : null,
+            ),
           );
         }
         return const _WithBackButton(
@@ -79,9 +82,12 @@ class _WithBackButton extends StatelessWidget {
 /// still renders the real page.
 class _LoadFailure extends StatelessWidget {
   final String message;
-  final Future<void> Function() onRetry;
 
-  const _LoadFailure({required this.message, required this.onRetry});
+  /// Null when retrying cannot change the outcome; the action is then not
+  /// offered at all rather than offered and inert.
+  final Future<void> Function()? onRetry;
+
+  const _LoadFailure({required this.message, this.onRetry});
 
   @override
   Widget build(BuildContext context) {
@@ -92,8 +98,10 @@ class _LoadFailure extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            TextButton(onPressed: onRetry, child: const Text('Try again')),
+            if (onRetry != null) ...[
+              const SizedBox(height: 12),
+              TextButton(onPressed: onRetry, child: const Text('Try again')),
+            ],
           ],
         ),
       ),
