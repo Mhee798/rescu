@@ -829,7 +829,7 @@ deep-link null cast), and stock correctness is the subject of **F-3**, where
 reservations replace this client-side cap entirely. If F-3 is not reached, this
 should be fixed on its own.
 
-### The cart worker is never disposed
+### The cart worker is never disposed — *resolved, this became RES-103's fix*
 
 `deal_details_controller.dart` stores the `Worker` from `ever(...)` but has no
 `onClose()` override, and GetX 4.7.3 does not dispose workers for a controller
@@ -839,8 +839,10 @@ deal screen visited leaves a live listener on the session-long
 this session. Observed directly during the RES-107 and stale-stock runs: deal 2
 logged `re-checking availability` **twice** after being opened twice.
 
-This is **RES-103**, so it is that ticket's fix, not a finding to act on here.
-Noted because RES-107 changed its shape: `onClose` can now run *before* the
+This is **RES-103**, so it became that ticket's fix rather than a finding acted
+on here — kept in this list because it was found during the RES-107 work, not
+by reading RES-103's ticket. Noted at the time because RES-107 changed its
+shape: `onClose` can now run *before* the
 worker is created on the deep-link path, so "store the `Worker`, dispose it in
 `onClose`" would dispose null and leak unconditionally. The `isClosed` guard in
 `_adopt` closes that from the other side, but RES-103 has to account for the
