@@ -44,7 +44,7 @@ rather than remembered.
 | 2026-09-12 | 16:30 | 17:10 | Own repo + remote hygiene; read every controller; RES-107 repro |
 | 2026-09-12 | 17:10 | 17:50 | RES-107 fix, peer review round, lifecycle measurement, follow-up fixes |
 | 2026-09-12 | 19:40 | 21:00 | Code review pass, RES-106/103/102 fixes, commit split, RES-102 negative control |
-| 2026-09-12 | 21:40 | 22:20 | F1 deep-link-over-open-deal confirmation, per-id tag fix, six-case device verification |
+| 2026-09-12 | 21:40 | 22:09 | F1 deep-link-over-open-deal confirmation, per-id tag fix, seven-case device verification |
 
 ---
 

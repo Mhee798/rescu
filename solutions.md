@@ -611,8 +611,8 @@ object. Nothing on the platform side is misconfigured.
 **A fourth entry path, found after the above was signed off.** The three cases
 verified above all start with no deal page on the stack. The one that does not —
 a deal page already open, the app backgrounded, a push for a *different* deal —
-was still broken, and it is the case a real push notification produces most
-often. On device: deal 1 open, HOME, `rescu://open/deal?id=7&source=push` →
+was still broken, and nothing about it is exotic: a push about a second deal
+arriving while the user is reading a first one. On device: deal 1 open, HOME, `rescu://open/deal?id=7&source=push` →
 `screen_view {screen: /deal}` logged, but **no `GET /deals/7`, no
 `deal_details_view`**, and the screen still showing Mystery Thai Feast. No
 crash, no error — the wrong deal, silently. That fails the ticket's own
@@ -656,6 +656,27 @@ The RES-107 change that captures `_routeDealId` and `_source` in `onInit` is
 what makes a *covered* deal-1 route safe to rebuild while deal 7 sits on top of
 it: neither value is re-read from the global `Get.parameters` after `onInit`.
 
+**Alternative rejected** *`Get.delete<DealDetailsController>()` before the
+`lazyPut`, so each push starts clean.* Two lines, no tags, no screen change.
+Rejected because it moves the symptom rather than removing it: the deal-1 route
+is still on the stack and its `GetView.controller` resolves through the same
+untagged key, so after deal 7 pops that page reads deal 7's disposed instance or
+throws. "Wrong deal on push" becomes "wrong deal on pop", which is harder to
+notice.
+
+*`Get.create` + `GetWidget` instead of `lazyPut` + `GetView`.* This is the GetX
+answer for genuinely multiple instances of one controller, and it needs no tag.
+Rejected on two counts: `GetWidget` ties the instance to the widget rather than
+the route, so `onClose` no longer runs via `RouterReportManager` on pop — which
+is exactly the disposal RES-103 depends on — and it changes the DI convention
+every other screen in the app follows, which CLAUDE.md §1 rules out.
+
+*Re-read `Get.parameters` on the existing controller when the route changes,
+and refetch.* One controller, no new instances. Rejected because one controller
+cannot hold two deals: whatever the covered deal-1 page rebuilt from after the
+refresh would be deal 7's data, unless it refetched on pop as well. That is
+state being reassigned until the visible case looks right, which §3 names.
+
 **Deliberately not fixed:** two pushes for the *same* id share a tag, so the
 second reuses the first controller and inherits its `_source`. The user sees the
 correct deal, which is the requirement; the cost is analytics attribution on a
@@ -675,9 +696,11 @@ point at a deal" message, which is also correct.
 | deal 1 open → HOME → link `id=1` | still deal 1, no crash, no second fetch |
 | tap from home feed | `deal_details_view {deal_id: 1, source: home}`, no `GET`, quantity chip renders — the check that would have caught the `_DealBody` regression |
 | in-app dialog, `id=42` | `GET /deals/42`, renders Mystery Japanese Basket |
+| Home open → HOME → link `id=7` | `GET /deals/7`, `deal_details_view {deal_id: 7, source: push}`, renders Surprise Bakery Box — the original warm-start path, re-checked after the tag change |
 
 Screenshots: `docs/res-107/06-deeplink-over-open-deal-fixed.png`,
-`docs/res-107/07-back-returns-to-working-deal-1.png`.
+`docs/res-107/07-back-returns-to-working-deal-1.png`,
+`docs/res-107/08-warm-start-from-home-recheck.png`.
 `fvm flutter analyze` clean, `fvm flutter test` 15/15.
 
 ---
