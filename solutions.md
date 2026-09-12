@@ -362,15 +362,31 @@ cache extent. The cost is allocation churn and the layout work that follows, not
 retention — the worst UI frame of the scroll-to-top case spent 35.11 ms in
 `LAYOUT`.
 
-One cost of this scope change had to be paid back. `Obx` cannot return null, so
-`Scaffold` stopped seeing the null-to-widget change it animates the FAB on:
-`_FloatingActionButtonTransition.didUpdateWidget` returns early when both
-children are non-null and their keys compare equal (`scaffold.dart:1368`), which
-two unkeyed widgets do, and the button began appearing at full size instead of
-scaling in. Distinct `ValueKey`s on the two branches restore it, and
-`test/home_fab_transition_test.dart` pins it — the keyed case takes more than
-one frame to reach full scale, the unkeyed case reaches it in one. The second
-case is there so the first cannot quietly become vacuous.
+One cost of this scope change had to be paid back, and the first attempt at it
+was wrong in a way worth keeping in the record. Narrowing the `Obx` costs the
+FAB its scale-in: `Scaffold` animates the button in
+`_FloatingActionButtonTransition.didUpdateWidget`, which runs only when the
+**`Scaffold`** rebuilds with a different `floatingActionButton`. An `Obx`
+rebuilds itself and never its parent, so that method is now unreachable from
+this screen, and the `ScaleTransition` stays at the value it settled on at
+mount — 1.0, because `Obx` is non-null from the first frame. The old code got
+the animation for free precisely because the whole `Scaffold` sat inside the
+`Obx`.
+
+I first read this one level too low, concluded that the early return on equal
+keys (`scaffold.dart:1368`) was the cause, gave the two branches distinct
+`ValueKey`s, and wrote it up as fixed. It changed nothing — a probe pumping the
+production shape reads `scale == 1.0` before the flip, after it and 380 ms
+later. The animation is now done in the widget instead: `AnimatedScale` inside
+the `Obx`, wrapped in `IgnorePointer` because a zero-scale `Transform` keeps its
+layout slot and stays a live tap target.
+
+`test/home_fab_transition_test.dart` pins it, and that file had to be rewritten
+too. Its first version toggled the branch with `pumpWidget`, which rebuilds the
+`Scaffold` and so exercised a path this screen never takes; it passed while the
+button popped in at full size. It now mounts the `Obx` form and drives it by
+writing to the `Rx`, with two controls — the un-animated shape reaching full
+size in a single frame, and the hidden button refusing a tap.
 
 *Fix.* `ListView.builder`, with the two headers kept in place by an index offset
 rather than a second widget list. The horizontal flash rail was already a
@@ -397,10 +413,21 @@ The consequence shows in the raster thread: the worst frame of the scroll-to-top
 case spent **73.16 ms in `UploadTextureToPrivate`**, the GPU upload of decoded
 bitmaps.
 
-*Fix.* `memCacheWidth` from a `LayoutBuilder`, since the call sites pass
-`width: double.infinity` and the real slot width is only known after layout.
-Width only: `ResizeImage` preserves the aspect ratio from one dimension and
-constraining both would stretch the image.
+*Fix.* A decode hint from a `LayoutBuilder`, since the call sites pass
+`width: double.infinity` and the real slot size is only known after layout.
+Exactly one dimension is hinted — `ResizeImage` preserves the aspect ratio from
+one value and constraining both would stretch the image — and *which* one is not
+free: `BoxFit.cover` is bound by whichever dimension is proportionally larger,
+so the box's aspect is compared against the source's known 4:3.
+
+A first version hinted the width unconditionally, guarded by
+`slotHeight > slotWidth`, a 1:1 test standing in for a 4:3 one. There are
+**five** call sites, not the three I had looked at: the 64×64 thumbnails in
+`cart_screen.dart:33` and `orders_screen.dart:74` pass a 1:1 guard, so they took
+`memCacheWidth` 192, decoded 192×144, and `cover` upscaled that 1.33× into a
+192×192 box — a blur regression on two screens introduced by this fix. Verified
+on device after the correction: both screens render sharp and Flutter reports no
+oversized-image warning for them.
 
 **Fix** Three separate commits, one per cause: `b367cde`, `1792087`, `2a87716`.
 
