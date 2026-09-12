@@ -319,13 +319,29 @@ Graphics (`GL mtrack` stays at 684 kB throughout):
 +10 MB, then it **plateaus and dips** — the third reading is lower than the
 second. Total PSS at the end: 93,872 kB.
 
-**The "memory keeps climbing until the OS kills the app" symptom does not
-reproduce on either device**, including the one that does show the frame cost.
-That is what an `ImageCache` doing its job looks like: it is not leaking, it is
-saturated at its 100 MB ceiling and evicting. The cost lands on decode work —
-frame time — not on retention. Stated plainly because it contradicts the
-ticket's wording, and the write-up should not claim a memory improvement it
-cannot measure.
+**These meminfo figures do not measure the images.** Decoded pixel buffers are
+Skia allocations and are not in the Native Heap field; a process at 38 MB cannot
+be holding a 100 MB image cache, which is what the next section shows it is.
+The meminfo numbers are kept because they are real — the *process* footprint
+genuinely plateaus — but the reasoning that once sat here, that they showed a
+saturated cache, was measuring the wrong pool.
+
+`ImageCache`'s own counters, logged once a second from a temporary probe in
+`main()` while scrolling all 122 deals on the ELE-L29, are the authoritative
+figures:
+
+| | peak `currentSize` | peak `currentSizeBytes` | per image |
+|---|---|---|---|
+| control | 13 images | 99,840,000 B (95.2 MB) | 7,680,000 = 1600×1200×4 |
+| fixed | 36 images | 104,571,648 B (99.7 MB) | 2,904,768 = 984×738×4 |
+
+Both saturate the 100 MB default ceiling. So the conclusion stands — the cache
+evicts rather than growing without bound, and **"memory keeps climbing until the
+OS kills the app" does not reproduce** — but it now rests on the counter that
+defines it rather than on a process-level field that excludes it. Note also that
+`ImageCache` counts raw `w × h × 4` while `debugInvertOversizedImages` adds the
+mipmap third, which is why the same image is "7.68 MB" here and "10,000 KB"
+there.
 
 ## Image sizing — measured, and worse than my own arithmetic said
 

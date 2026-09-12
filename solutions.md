@@ -303,12 +303,29 @@ on a Huawei P30 Pro (Kirin 980, 2018, 60 Hz, Android 10), which is the
 "mid-range Android" the ticket is written about. Full baselines for both, and
 the procedure, are in `docs/res-105/baseline.md`.
 
-**The memory half of the ticket does not reproduce.** On both devices memory
-plateaus: on the P30 Pro, Native Heap goes 27.6 MB → 38.2 MB across all 122
-deals and then *falls* to 37.3 MB. That is an `ImageCache` doing its job — it is
-not leaking, it is saturated at its 100 MB ceiling and evicting. The cost of
-oversized images lands on decode and upload work, which is frame time, not on
-retention. No memory improvement is claimed here for that reason.
+**The memory half of the ticket does not run away, and this is measured rather
+than inferred.** An earlier draft argued this from `dumpsys meminfo` — Native
+Heap 27.6 MB → 38.2 MB across all 122 deals, then *falling* to 37.3 MB — and
+called the cache saturated at its 100 MB ceiling. Those two statements cannot
+both be true: a process sitting at 38 MB cannot be holding a full 100 MB image
+cache. The decoded pixel buffers are Skia allocations and do not appear in that
+field, so the meminfo figures were measuring a pool the images are not in.
+
+The authoritative number is `ImageCache` itself. Logged once a second from a
+temporary probe in `main()` (removed afterwards; never committed), scrolling the
+full 122-deal feed on the P30 Pro:
+
+| | peak `currentSize` | peak `currentSizeBytes` | bytes per image |
+|---|---|---|---|
+| control | **13** images | 99,840,000 (95.2 MB) | 7,680,000 = 1600 × 1200 × 4 |
+| fixed | **36** images | 104,571,648 (99.7 MB) | 2,904,768 = 984 × 738 × 4 |
+
+Both sit at the 100 MB default ceiling, so the original claim survives the
+correction: the cache saturates and evicts, it does not grow without bound, and
+the ticket's "until the OS kills the app" does not reproduce. What the fix buys
+is **2.8× more images resident for the same memory**, which is fewer evictions
+and fewer re-decodes on the same scroll — not a smaller footprint. No reduction
+in memory is claimed.
 
 ### Cause 1 — one `Obx` around the whole `Scaffold`, reading a value written every frame
 
@@ -346,7 +363,9 @@ retention — the worst UI frame of the scroll-to-top case spent 35.11 ms in
 `LAYOUT`.
 
 *Fix.* `ListView.builder`, with the two headers kept in place by an index offset
-rather than a second widget list.
+rather than a second widget list. The horizontal flash rail was already a
+`ListView.builder` (`flash_deals_section.dart:36`) and needed no change — this
+cause is confined to the vertical feed.
 
 ### Cause 3 — every image decoded at 1600×1200 whatever slot it lands in
 
@@ -360,11 +379,13 @@ which uses an additional 6593KB (assuming a device pixel ratio of 3.5).
 ```
 
 By the framework's own accounting (`painting/debug.dart:93` — `w × h × 4 × 4/3`,
-four bytes per pixel plus a third for mipmaps) that is 10,000 KB held per image
-against 3,406 KB needed. `ImageCache` defaults to 100 MB, so it holds **ten** of
-them; a 122-deal feed evicts and re-decodes continuously. The consequence shows
-in the raster thread: the worst frame of the scroll-to-top case spent **73.16 ms
-in `UploadTextureToPrivate`**, the GPU upload of decoded bitmaps.
+four bytes per pixel plus a third for mipmaps) that is 10,000 KB reported per
+image against 3,406 KB needed. `ImageCache` itself counts the raw `w × h × 4`,
+so what it actually holds is 7.68 MB apiece and, measured, **13** images before
+its 100 MB default ceiling — a 122-deal feed evicts and re-decodes continuously.
+The consequence shows in the raster thread: the worst frame of the scroll-to-top
+case spent **73.16 ms in `UploadTextureToPrivate`**, the GPU upload of decoded
+bitmaps.
 
 *Fix.* `memCacheWidth` from a `LayoutBuilder`, since the call sites pass
 `width: double.infinity` and the real slot width is only known after layout.
@@ -434,7 +455,7 @@ free-running (medians):*
 | decode size | 1600 × 1200 | **984 × 738** |
 | held per image | 10,000 KB | **3,781 KB** |
 | overhead Flutter reports | 7,540 KB | **1,322 KB** |
-| images the 100 MB cache holds | ~10 | ~26 |
+| images the 100 MB cache holds (measured) | **13** | **36** |
 
 The warning does not disappear — 36 lines still appear over fourteen swipes,
 now reading `display size of 984×480 but a decode size of 984×738`. That
@@ -532,6 +553,17 @@ busier. And `BUILD` per frame is 0.631 ms here against 0.045 ms on the gentle
 swipe, because a fast fling pulls far more cards into the viewport and that
 build work is real rather than redundant. The fix removes the waste; it does not
 make a fling free, and fifteen frames are still dropped.
+
+*What is left, as a hypothesis rather than a finding.* Of the two threads,
+raster is now the worse one — p90 14.28 ms against the UI thread's 8.89 ms — and
+the biggest single item inside the slowest raster frames measured anywhere in
+this exercise was `UploadTextureToPrivate`. The images are three times smaller
+than they were but they are still decoded and uploaded during the scroll, one
+per card crossing the viewport. The next thing I would try is prefetching with
+`precacheImage` ahead of the viewport so the decode is not on the critical path,
+and `RepaintBoundary` on `DealCard` so a card that has not changed is not
+re-rastered when its neighbours move. Neither is measured, and neither belongs
+in this ticket's diff.
 
 **What did not improve, and I could not make it.** The worst case found is the
 scroll-to-top FAB — `animateTo(0, 400ms)` from the end of a loaded feed, which
