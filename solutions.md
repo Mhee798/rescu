@@ -1071,7 +1071,52 @@ at all, just a `State` that never implemented `dispose`. Naming it would be
 guessing at the author's habits; RES-103's mechanism names itself.
 
 **Q2 — When does wrapping a large subtree in a single `Obx` hurt, and how do you scope reactivity?**
-—
+
+A wide `Obx` is free until something inside it observes a value that changes
+often. The cost is not the size of the subtree, it is the product of that size
+and the notification rate of the *most frequently changing* thing read inside
+it. RES-105 is the clean example: `HomeScreen` wrapped its whole `Scaffold` in
+one `Obx`, which would have been harmless — the deal list changes on refresh and
+paging, a handful of times a minute — except that its first statement read
+`scrollOffset.value`, written on every scroll callback. That single line
+promoted the entire feed to rebuilding once per rendered frame. Measured: 23
+`Scaffold` builds in 23 frames, 385 `DealCard` objects constructed for 93 real
+builds, `BUILD` costing 2.09 ms of a 16.7 ms budget on a 2018 device.
+
+So the question to ask of any `Obx` is not "is this subtree big?" but "what is
+the fastest-changing observable read anywhere inside it, and is the whole subtree
+worth rebuilding at that rate?" One high-frequency value drags everything else
+along with it.
+
+Scoping it has two halves, and only doing the second is the common mistake:
+
+1. **Narrow the scope to what the value actually affects.** Here that meant
+   three `Obx` — AppBar, body, FAB — instead of one. Where the reactive value
+   feeds a non-widget property, as with `AppBar.elevation`, the scope has to go
+   somewhere the type system allows: `Scaffold.appBar` demands a
+   `PreferredSizeWidget`, so the `Obx` moved inside a `PreferredSize`.
+
+2. **Lower the notification rate at the source.** This is the half that
+   mattered more. Narrowing alone would still have woken the AppBar's `Obx` 60
+   to 120 times a second to produce the same elevation almost every time,
+   because the notification comes from the `Rx` changing and a scroll offset
+   changes continuously. The controller now publishes `isScrolled` and
+   `showScrollToTop` as `RxBool` rather than the offset, and `Rx.value` skips
+   notifying when the value is unchanged (`rx_impl.dart:101`), so each flag
+   fires twice per journey down the feed. After: `Scaffold` builds **0** times
+   across 86 frames, `BUILD` 0.045 ms per frame.
+
+The general shape: put the derivation in the controller so the observable only
+changes when the rendered output would change, then scope the `Obx` to the
+widget that consumes it. Deriving `RxBool`s from a continuous value is cheap
+precisely because GetX compares before notifying — the same property that makes
+`.obs` on a raw offset so expensive is what makes the threshold flag free.
+
+A caveat from the same ticket, because it cuts against over-applying this: the
+`Obx` fix removed almost all UI-thread work during ordinary scrolling and did
+**nothing** for the scroll-to-top animation, where the build work is real rather
+than redundant. Reactivity scoping removes waste; it does not make genuine work
+cheaper, and it is worth measuring which of the two you have before assuming.
 
 **Q3 — An automated test that would have caught RES-106, and what would have to change to make it possible.**
 
