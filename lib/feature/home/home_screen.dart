@@ -22,6 +22,9 @@ class HomeScreen extends GetView<HomeController> {
     return Scaffold(
       // `Scaffold.appBar` takes a `PreferredSizeWidget`, which `Obx` is not, so
       // the reactive scope goes inside a `PreferredSize` rather than around it.
+      // `kToolbarHeight` restates what `AppBar.preferredSize` used to compute:
+      // correct while this AppBar has no `bottom:` and no `toolbarHeight:`, and
+      // the place to update if either is ever added.
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(kToolbarHeight),
         child: Obx(
@@ -132,13 +135,20 @@ class HomeScreen extends GetView<HomeController> {
           ),
         );
       }),
+      // The keys are load-bearing, not decoration. `Obx` cannot return null, so
+      // `Scaffold` no longer sees the null-to-widget change it used to animate
+      // on; `_FloatingActionButtonTransition.didUpdateWidget` bails out when
+      // both children are non-null and their keys compare equal
+      // (`scaffold.dart:1368`), which two unkeyed widgets do. Distinct keys
+      // restore the scale-in.
       floatingActionButton: Obx(
         () => controller.showScrollToTop.value
             ? FloatingActionButton.small(
+                key: const ValueKey('scroll-to-top'),
                 onPressed: controller.scrollToTop,
                 child: const Icon(Icons.arrow_upward),
               )
-            : const SizedBox.shrink(),
+            : const SizedBox.shrink(key: ValueKey('no-fab')),
       ),
     );
   }
