@@ -248,3 +248,54 @@ brackets, no quotes. Restarted and re-measured. The wider point is that the two
 rejected forms failed very differently and only one of them said so; after this,
 any VM Service call that has not returned a clean result is verified with
 `getVersion` before the next one is sent.
+
+### 2026-09-12 · RES-105 (a measurement window that contained none of the thing being measured)
+**Suggested:** After capturing dropped frames on the ELE-L29 by having a person
+flick the device hard, I ran the identical procedure on the PTP N49 and got
+`Animator::BeginFrame` 0 frames over budget at a steady 121 fps. The obvious
+reading — and the one I was about to write — is "the flagship absorbs it
+completely", which also happens to be the conclusion I already expected.
+
+**Why it was wrong:** The window contained almost no work. `BUILD` totalled
+28 ms across six seconds, against 730 ms for the same gesture on the other
+device. At 120 Hz the flagship's fling clears a 122-card feed in about a second,
+and the VM timeline's ring buffer retains only the last few seconds — so what
+was captured was the overscroll bounce at the bottom of the list, a screen doing
+nothing. "Zero dropped frames" was true of a static screen.
+
+**How it was caught:** The `BUILD` total, checked before reading anything else,
+precisely because the first attempt on this device had already produced a
+suspiciously quiet capture. Then confirmed instead of guessed: a scripted swipe
+taken while parked at the bottom gives 0.041 ms of BUILD per frame, the same
+swipe from the top of the feed gives 1.216 ms.
+
+**Done instead:** Cross-device comparison moved to a scripted swipe from a known
+scroll position with the feed loaded to the same depth — reproducible, and it
+cannot silently measure a bottom bounce. The hand flick is kept only for the
+ELE-L29, where the capture is verifiable. The wider lesson is the one this log
+keeps relearning from a new angle: a quiet result needs the same scrutiny as a
+loud one, and here it needed *more*, because it agreed with what I expected.
+
+### 2026-09-12 · RES-105 (numbers inflated by the instrument that produced them)
+**Suggested:** I reported `Obx` build durations of 3.38 ms and 1.37 ms as the
+per-rebuild cost on the two devices, and wrote that "every scroll frame spends
+3.38 ms of a 16.7 ms budget" into the baseline document.
+
+**Why it was wrong:** Those came from timelines recorded with
+`ext.flutter.profileWidgetBuilds` enabled, which wraps every widget build in a
+timeline event. The spans nest, so a parent's duration includes its children's
+and the totals double-count, and the instrumentation is itself overhead that
+would not be present in the app as shipped. It is the measurement equivalent of
+quoting a debug-mode frame time.
+
+**How it was caught:** Re-running with tracking off to get a clean cross-device
+comparison, and finding the phase-level `BUILD` cost was 1.22 ms per frame on
+*both* devices — nothing like the 2.5× spread the instrumented per-widget
+figures implied.
+
+**Done instead:** Phase-level `BUILD` and `LAYOUT` with tracking off are now the
+reported cost; the per-widget numbers are marked superseded in the document
+rather than deleted, since they were the more dramatic ones and a reader
+comparing revisions should see which way the correction went. Widget-build
+tracking is still used, but only for *counting* rebuilds, which is what it is
+reliable for.

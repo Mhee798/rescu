@@ -142,6 +142,16 @@ What is inside the frames that dropped:
 | raster, 36.99 ms | `SurfaceFrame::Encode` 33.52 ms |
 | raster, 32.23 ms | `SurfaceFrame::Encode` 29.26 ms |
 
+**The same flick could not be captured on the PTP N49.** Two attempts returned
+BUILD totals of 37.4 ms and 28.1 ms over ~6 s windows, against the ELE-L29's
+730 ms — not a fast phone, an empty measurement. The cause: at 120 Hz with that
+fling velocity the flagship reaches the end of a 122-card feed inside the
+captured window, and the VM timeline's ring buffer only retains the *last* few
+seconds, which is the bottom overscroll bounce. Confirmed rather than assumed —
+a scripted swipe taken while parked at the bottom gives BUILD 0.041 ms/frame,
+and the identical swipe from the top gives 1.216 ms/frame. The cross-device
+table above uses the scripted procedure for exactly this reason.
+
 The worst UI frame is 86 % widget building — the `Obx` closure reconstructing
 the `Scaffold` and every loaded `DealCard`. `FINALIZE TREE` at 16.52 ms in
 another is the element tree churning behind the same rebuild. The raster frames
