@@ -115,6 +115,19 @@ class DealDetailsController extends GetxController {
     _cartWorker = ever(cartService.itemCount, (_) => _recheckAvailability());
   }
 
+  @override
+  void onClose() {
+    // `ever` hands back a `Worker` precisely because the caller owns it: GetX
+    // disposes this controller but knows nothing about the subscription it
+    // registered on `CartService`, which outlives every screen. Bounding the
+    // worker's life at this end, and at the other end with the `isClosed` guard
+    // in `_adopt`, is what ties it to the controller — neither guard does it
+    // alone.
+    _cartWorker?.dispose();
+    _cartWorker = null;
+    super.onClose();
+  }
+
   Future<void> _recheckAvailability() async {
     final deal = _deal.value;
     if (deal == null) return;

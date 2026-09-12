@@ -158,15 +158,90 @@ out of My orders five times — fifteen timers created and discarded — produce
 **zero** `setState() called after dispose()` and zero unhandled exceptions.
 
 ## RES-103 · Requests pile up the longer you browse
-**Status** not started
+**Status** fixed — reproduced, fixed, re-verified on device
 
 **Symptom** Each "Add to bag" fires one `GET /deals/:id` per deal viewed earlier in the session.
 
-**Root cause** —
-**Fix** —
-**Alternative rejected** —
-**Edge cases** —
-**Evidence** —
+**Root cause** The controller is disposed correctly — GetX does its job. What
+outlives it is a **subscription to an observable owned by a `permanent: true`
+service, registered by a screen-scoped object that never claimed ownership of
+it.**
+
+`DealDetailsController` calls `ever(cartService.itemCount, …)`. `CartService` is
+put `permanent: true` in `main.dart`, so it and its `itemCount` live for the whole
+session. `ever` returns a `Worker` — which is the API telling you that you own
+the subscription — and the controller discarded it. GetX does not close it for
+you: in `get` 4.7.3 nothing under `get_state_manager/` or `get_instance/`
+references `Worker` at all. So every visit to a deal screen adds one permanent
+listener, and one cart change wakes all of them, each calling
+`dealRepo.fetchById` for its own captured deal.
+
+**The null guard already in `_recheckAvailability` does not stop this**, and the
+distinction matters because a reader will see it and assume the ticket was
+half-fixed by RES-107. `if (deal == null) return;` never fires on a disposed
+controller: `_deal.value` was populated before the pop and GetX 4 does not clear
+a controller's `Rx` fields on dispose. The guard exists for the pre-adoption
+window on the deep-link path, not for disposal.
+
+**Fix** Dispose the `Worker` in `onClose`. Complete only in combination with the
+`isClosed` guard in `_adopt` added for RES-107 — the worker's lifetime has to be
+bounded by the controller's at **both** ends, and neither half does it alone:
+
+- Without `onClose` disposal, a worker that was created outlives its controller.
+- Without the `isClosed` guard, `onClose` can run *before* `_watchCart` on the
+  deep-link path (measured for RES-107: with a back press ~100ms in, `onClose`
+  precedes the fetch response in 6 runs out of 6). `onClose` would then dispose
+  `null` and the later registration would leak unconditionally.
+
+**Alternative rejected** *Widen the null guard into a disposal guard — check
+`isClosed` inside `_recheckAvailability`, or null out `_deal` in `onClose`, so
+the callback returns early on a dead controller.* This is CLAUDE.md §3's
+`if (mounted)` entry wearing different clothes, and it is a sharper example than
+RES-102's because the symptom-mask is **already sitting in the file**: widening
+the existing early return would make the log lines disappear while every listener
+stayed subscribed to a session-long service, still holding its controller, its
+`DealModel` and its repository. The requests would stop; the retention would not.
+
+**Edge cases**
+- *One re-check still fires after the fix, and that is correct.* A live details
+  screen is supposed to re-check its own stock when the cart changes — that is
+  the feature. The number to expect is 1, not 0.
+- *Deep-link path where `onClose` precedes registration.* Covered by the
+  `isClosed` guard rather than by disposal; see above.
+- *`retry()` re-registering.* `_watchCart` returns early when `_cartWorker != null`
+  and `Worker.dispose()` is itself idempotent (`rx_workers.dart:263` sets
+  `_disposed` first), so neither a retry nor a double `onClose` can double-
+  subscribe or double-cancel.
+- **Not handled, deliberately:** `_recheckAvailability` still has no `try`/`catch`,
+  so a failing `fetchById` on a *live* screen becomes an unhandled async error.
+  That is a separate defect from the leak and is logged under "Findings logged,
+  not fixed" rather than folded in here.
+
+**Evidence** Counted `re-checking availability for deal X` — the `LogService.log`
+at the top of `_recheckAvailability` — **not** the raw `GET /deals/:id` line,
+because RES-107 made the deep-link path fetch by id for legitimate loads too, so
+`GET` no longer isolates re-checks.
+
+Same procedure both times on PTP N49 over USB: open the first feed card and press
+back, three times, then open it a fourth time and tap Add to bag once.
+
+*Before* (20:47) — four views, one tap, **four** re-checks in the same
+millisecond, from one live controller and three dead ones:
+```
+analytics: deal_details_view {deal_id: 1, source: home}   ×4
+[20:47:14.995] re-checking availability for deal 1
+[20:47:14.996] re-checking availability for deal 1
+[20:47:14.996] re-checking availability for deal 1
+[20:47:14.996] re-checking availability for deal 1
+```
+
+*After* (20:54) — same four views, same single tap, **one** re-check:
+```
+analytics: deal_details_view {deal_id: 1, source: home}   ×4
+[20:54:45.238] re-checking availability for deal 1
+```
+
+4 → 1, where 1 is the live screen doing its job.
 
 ## RES-104 · Duplicate deals in the home feed
 **Status** not started
