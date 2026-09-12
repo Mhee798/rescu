@@ -128,6 +128,14 @@ zone. `isToday` answers "can I collect this today?", a property of the *user's*
 calendar day, which stays device-local under any design. Treating them as one
 fix would be the naive reading.
 
+**Alternative rejected (test seam)** *Test `isToday` directly by building a
+window relative to `DateTime.now()` and skipping the extra method.* Rejected
+because the assertion would then straddle local midnight and go flaky for the
+run that happens to cross it — a test that fails once a day at 00:00 gets
+deleted, not fixed. Injecting a clock into the model was also rejected: GetX does
+not inject into hand-written models here, and a static overridable `now` hook is
+global mutable state that leaks between tests.
+
 **Alternative rejected** *Hardcode `+7` in the client to match
 `_marketUtcOffsetHours`.* It reproduces the backend's own conversion and is right
 for the 27 Bangkok stores. Rejected because it copies a backend business constant
@@ -155,8 +163,18 @@ they have not.
   `OrderModel.pickupStart/pickupEnd`, whose only consumer is `PickupCountdown`
   (`orders_screen.dart:95`) doing `.difference(DateTime.now())`. Patching those
   for symmetry would have been churn.
-- *Overnight windows* (e.g. 22:00–01:00) still render end-before-start as a
-  label, which is the existing intended display and unchanged here.
+- *Overnight windows, logged not fixed.* A 22:00–01:00 window renders
+  end-before-start. This is **9 of the 30 stores** — Chao Phraya Sushi
+  22:00–01:00, Green Mango Deli 21:30–00:30, Siam Patisserie 23:00–02:00 and six
+  more — so 30% of the catalog, not an edge case, and I should not have waved it
+  through as one. The instants are right: `_pickupWindowFor` rolls the end past
+  midnight deliberately (`endMarket.add(days: 1)`). What is ambiguous is the
+  *rendering*, and the ticket's stated harm is "some users showed up at closed
+  stores", which an ambiguous label could plausibly cause. It is still out of
+  scope here, but for a better reason than "existing display": disambiguating it
+  (`22:00 – 01:00 (next day)`, or a date qualifier) is a product decision about
+  what the card should say, not a defect on this ticket's causal path — the
+  ticket's complaint is a 7-hour offset, which is fixed.
 
 **Evidence** The bug was pinned by a throwaway characterisation test written
 **against the unfixed code**, so the fix could be shown to change behaviour
@@ -175,8 +193,21 @@ Expected: <true>
   Actual: <false>
 ```
 The throwaway was then deleted and replaced by `test/pickup_window_test.dart`
-(8 cases, including the month-apart and year-apart cases the old `.day`
-comparison got wrong). `fvm flutter test` 9/9.
+(including the month-apart and year-apart cases the old `.day` comparison got
+wrong, and one asserting `isToday` actually delegates to `isTodayAt` — without
+it, `isToday => isTodayAt(DateTime.now().toUtc())` would pass everything else
+while restoring the filter bug). Suite 10/10, green at `TZ=Asia/Bangkok`,
+`TZ=UTC` and `TZ=America/New_York`.
+
+**Characterised coverage, including where it is blind.** At `TZ=UTC` the label
+assertions are worthless: `toLocal()` is the identity, so the derived expectation
+evaluates to `'23:00 – 02:30'`, which is precisely what the unfixed getter
+produced. Verified rather than assumed — a scratch test printing both strings
+reported `OLD_WOULD_PASS=true` at offset zero and `false` at +07. The suite
+therefore **catches the calendar half of RES-106 at any offset** (the old
+day-only comparison still fails the month- and year-apart cases at UTC) and is
+**blind to the zone half at offset zero**. That case now calls
+`markTestSkipped`, so a UTC run reports `~1` rather than a silent pass.
 
 On device (PTP N49, local +07), the same card moved from
 `Pick up 22:30 – 01:00` to `Pick up 05:30 – 08:00` — a clean +7h shift.
@@ -445,12 +476,22 @@ internally and remain untestable for the same reason — they were correct, so I
 left them, but the same seam would be the fix.
 
 What is still not covered: `label` depends on the *process* timezone, which Dart
-reads at start-up and a test cannot change from inside. Covering the zone
-conversion honestly means running the suite under at least two offsets (e.g.
-`TZ=UTC` and `TZ=Asia/Bangkok`) in CI. The current test derives its expectation
-from the instant, so it passes at any offset and would have failed on the old
-code at any non-zero one — but at `TZ=UTC` it is vacuous, which the test says
-out loud rather than hiding.
+resolves at start-up and a test cannot change from inside, so honest coverage
+means running the suite more than once in CI. The two values should be
+`TZ=Asia/Bangkok` and `TZ=America/New_York`, not Bangkok and UTC — a positive
+offset puts the local date *ahead* of the UTC date and a negative offset puts it
+*behind*, which are mirror-image failures, and the fixture in this suite is
++07-shaped so the negative case would otherwise never be exercised. (It passes
+at New York today; that is a claim I can make because I ran it, not because the
+arithmetic looks symmetric.) `TZ=UTC` belongs in the matrix only as the
+documented blind spot described under Evidence, never as one of the two real
+values.
+
+The test derives its expected label from the instant rather than hardcoding
+`'06:00 – 09:30'`, which keeps it green at every offset. That is less
+tautological than it looks: the expectation reads `.hour`/`.minute` directly
+while production goes through `DateFormat('HH:mm')`, so it is an independent
+path to the same answer rather than a copy of the implementation.
 
 ---
 

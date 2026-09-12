@@ -48,6 +48,33 @@ rather than remembered.
 
 ## Entries
 
+### 2026-09-12 · RES-106 (a test I believed in that covered nothing)
+**Suggested:** Having written `pickup_window_test.dart`, I guarded the one
+offset-dependent assertion with an early `return` at `TZ=UTC` and commented that
+"the assertion above still covers the conversion". I then reported the suite as
+the evidence for RES-106 and committed it.
+
+**Why it was wrong:** At offset zero `toLocal()` is the identity, so the derived
+expectation evaluates to `'23:00 – 02:30'` — byte-identical to what the unfixed
+getter produced. The entire label group passes *against the bug* at UTC. My
+comment asserted the opposite, in a document written to be graded on the
+strength of its evidence. The early `return` made it worse than a gap: a blind
+spot that reports as a green test.
+
+**How it was caught:** A review pointed at the line; I checked it rather than
+taking either the comment or the reviewer on trust, with a scratch test printing
+the old label and the derived expectation side by side. `OLD_WOULD_PASS=true` at
+offset zero, `false` at +07.
+
+**Done instead:** `markTestSkipped` so a UTC run reports `~1` instead of a pass,
+and the coverage characterised precisely in `solutions.md` rather than claimed:
+the suite catches the calendar half of RES-106 at any offset and is blind to the
+zone half at offset zero. The precise version is worth more than the coverage
+would have been. General lesson, and it is the same one as the RES-107 entry
+below: I keep confirming the half of a condition I can see. There I sampled one
+end of a latency distribution; here I reasoned about the non-UTC case and
+asserted the UTC case.
+
 ### 2026-09-12 · RES-107 (my own reasoning, caught by repeating the measurement)
 **Suggested:** A review pointed out that my RES-107 fix had opened a window
 where the uncancellable deep-link fetch completes after `onClose`, registering

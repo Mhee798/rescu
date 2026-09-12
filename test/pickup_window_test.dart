@@ -27,13 +27,28 @@ void main() {
     });
 
     test('does not print the raw UTC fields', () {
-      // The pre-fix implementation produced exactly this.
+      // Measured, not assumed: at offset zero `toLocal()` is the identity, so
+      // the expectation above evaluates to '23:00 – 02:30' — which is exactly
+      // what the pre-fix implementation produced. The whole label group is
+      // therefore green against the bug here and covers nothing. Skip rather
+      // than return, so a UTC run reports the blind spot instead of a pass.
       if (DateTime.now().timeZoneOffset == Duration.zero) {
-        // On a UTC machine local and UTC coincide and there is nothing to
-        // catch; the assertion above still covers the conversion.
+        markTestSkipped(
+            'local zone is UTC; the zone half of RES-106 is unobservable here');
         return;
       }
       expect(window().label, isNot('23:00 – 02:30'));
+    });
+  });
+
+  group('isToday', () {
+    test('delegates to isTodayAt with the current local time', () {
+      // The seam is only worth having if the getter production calls actually
+      // uses it. `isToday => isTodayAt(DateTime.now().toUtc())` would satisfy
+      // every other test here while putting the filter bug straight back.
+      final w = window();
+
+      expect(w.isToday, w.isTodayAt(DateTime.now()));
     });
   });
 
