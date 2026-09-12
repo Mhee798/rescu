@@ -13,28 +13,46 @@ after-figures can be compared against the same procedure.
 
 Method: VM Service over the `flutter run --profile` URI —
 `setVMTimelineFlags?recordedStreams=[Dart,Embedder]`,
-`ext.flutter.profileWidgetBuilds?enabled=true`, `clearVMTimeline`, one
-`adb shell input swipe 640 2000 640 900 400`, then `getVMTimeline`.
-32,679 events in the window; 83 `Animator::BeginFrame`.
+`ext.flutter.profileWidgetBuilds?enabled=true`, `getAllocationProfile?reset=true`,
+`clearVMTimeline`, one `adb shell input swipe 640 2000 640 900 400`, then
+`getVMTimeline` and `getAllocationProfile` over the same window.
 
-| Widget | build events in one swipe |
+| | count in one swipe |
 |---|---|
-| `Scaffold` / `AppBar` / `SmartRefresher` / `ListView` / `FlashDealsSection` | **26 each** |
-| `Obx` | 26 |
-| `FilterChip` | 27 |
-| `DealCard` | 112 |
-| `TheNetworkImage` / `CachedNetworkImage` / `OctoImage` / `Image` / `RawImage` | 216 each |
+| `Animator::BeginFrame` (frames) | **23** |
+| `Obx` builds | **23** |
+| `Scaffold` builds | **23** |
+| `AppBar` builds | 23 |
+| `DealCard` builds | 93 |
+| `TheNetworkImage` builds | 93 |
 
-The whole `Scaffold` subtree rebuilding 26 times for a single swipe is the
-ticket's "the entire feed rebuilding continuously during scroll", measured.
+**One full `Scaffold` rebuild per rendered frame — 23 out of 23.** Not "often
+during scroll": every single scroll frame rebuilds the entire feed subtree. That
+is the ticket's "the entire feed rebuilding continuously during scroll", and it
+is the one symptom that reproduces exactly as written on this device.
 
-Note what the same data rules *out*: `DealCard` builds 112 times across 26
-parent rebuilds — about 4.3 per rebuild, i.e. only the cards in the viewport
-plus cache extent. `ListView(children: [...])` does not keep off-screen card
-*elements* alive. Its cost is that the spread constructs one `DealCard` **widget
-object** per deal — 100+ of them — on every one of those 26 rebuilds, together
-with the fresh `List` that `visibleDeals` returns each time. Allocation churn,
-not retention.
+Allocation over the identical window (`instancesAccumulated`):
+
+| class | instances | bytes |
+|---|---|---|
+| `_List` | 24,509 | 1,270,432 |
+| `_GrowableList` | 5,607 | 179,424 |
+| `DealCard` | 385 | 12,320 |
+| `InkWell` | 95 | 15,200 |
+| `CachedNetworkImage` | 41 | 4,592 |
+| `DealModel` | 54 | 4,320 |
+
+`DealCard`: 385 objects constructed, 93 of them actually built. The gap is the
+cost of `...visibleDeals.map((deal) => DealCard(deal: deal))` inside the `Obx` —
+the spread constructs one widget per loaded deal on every one of the 23
+rebuilds, while the sliver only calls `build()` on the four or so in the
+viewport. 1.27 MB of `_List` churn in 400 ms comes from the same place, together
+with the fresh list `visibleDeals` returns each time.
+
+Note what the same data rules *out*: `ListView(children: [...])` does **not**
+keep off-screen card elements alive — 93 builds across 23 parent rebuilds is
+roughly the viewport plus cache extent. The cost here is allocation churn, not
+retention.
 
 ## Frame times — no jank on this device
 
@@ -65,31 +83,44 @@ deals were scrolled past.
 ticket describes — on 16 GB of RAM with a 100 MB image cache that is already
 full at the first screen.
 
-## Image sizing — arithmetic, not yet an isolated measurement
+## Image sizing — measured, and worse than my own arithmetic said
 
 `fake_api_service.dart:267` serves every deal image as
 `picsum.photos/seed/<seed>/1600/1200`, and `TheNetworkImage` passes no
-`memCacheWidth`/`cacheWidth`. Decoded RGBA cost is fixed at 1600×1200×4 =
-**7.68 MB per distinct image** regardless of the slot it lands in.
+`memCacheWidth`/`cacheWidth`, so the decode size is fixed regardless of the slot.
 
-At this device's DPR of 3.5:
+Measured rather than derived: a debug run with
+`ext.flutter.invertOversizedImages` enabled over the VM Service, then twelve
+swipes through the feed. Flutter reports, once per painted card image:
 
-| slot | physical px | decode actually needed (cover) | served | waste |
-|---|---|---|---|---|
-| feed card, 160 dp tall × (365.7−32) dp wide | 1168 × 560 | 1168 × 876 → 4.09 MB | 7.68 MB | ×1.9 |
-| flash rail, 90 dp × 200 dp | 700 × 315 | 700 × 525 → 1.47 MB | 7.68 MB | ×5.2 |
-| details header, 240 dp × full width | 1280 × 840 | 1280 × 960 → 4.92 MB | 7.68 MB | ×1.6 |
+```
+Image null has a display size of 1168×560 but a decode size of 1600×1200,
+which uses an additional 6593KB (assuming a device pixel ratio of 3.5).
+```
 
-So "1600×1200 into a 160 px slot" overstates it — the slot is 160 *logical* px
-tall but 1168 physical px wide, and `BoxFit.cover` is width-bound. The real
-multiplier on the feed is about 2×, and about 5× on the rail.
+That is the framework's own accounting, not an estimate of mine, and its formula
+is `w × h × 4 × 4/3` (`painting/debug.dart:93-97` — four bytes per pixel plus a
+third for mipmaps):
 
-The sharper consequence is the cache, not the per-image waste: Flutter's
-`ImageCache` defaults to 100 MB, which holds **13** images at 7.68 MB each. A
-122-deal feed cannot keep even two screens' worth resident, so scrolling evicts
-and re-decodes continuously. That is consistent with the `Graphics` figure
-sitting flat at ~70 MB rather than climbing — the cache is not growing, it is
-saturated.
+| | pixels | bytes by that formula |
+|---|---|---|
+| decoded | 1600 × 1200 | 10,240,000 (10,000 KB) |
+| needed for the slot | 1168 × 560 | 3,488,426 (3,406 KB) |
+| **overhead per image** | | **6,751,573 (6,593 KB)** |
 
-**Not yet isolated.** No before/after decode measurement has been taken; the
-above is arithmetic from the source and the device's density.
+So each feed card costs **2.94×** the memory it needs, and the fix Flutter itself
+names in the same message is `cacheWidth: 1168`.
+
+My earlier note in this file put the multiplier at about 1.9× by assuming four
+bytes per pixel and comparing against a `BoxFit.cover` crop. Both were wrong:
+the framework counts the mipmap third, and it compares against the destination
+rectangle, not the cropped source. The measured figure supersedes it.
+
+The consequence is the cache, not the per-image waste. Flutter's `ImageCache`
+defaults to 100 MB, which holds **ten** images at 10 MB each. A 122-deal feed
+cannot keep two screens resident, so scrolling evicts and re-decodes
+continuously — consistent with `Graphics` sitting flat at ~70 MB rather than
+climbing: the cache is not growing, it is saturated.
+
+The flash rail (90 dp × 200 dp) and the details header (240 dp, full width) load
+the same 1600×1200 asset and were not separately measured.
