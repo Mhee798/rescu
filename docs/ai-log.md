@@ -43,6 +43,8 @@ rather than remembered.
 | 2026-09-12 | 16:10 | 16:30 | Orientation, environment verification, baselines, scaffolding |
 | 2026-09-12 | 16:30 | 17:10 | Own repo + remote hygiene; read every controller; RES-107 repro |
 | 2026-09-12 | 17:10 | 17:50 | RES-107 fix, peer review round, lifecycle measurement, follow-up fixes |
+| 2026-09-12 | 19:40 | 21:00 | Code review pass, RES-106/103/102 fixes, commit split, RES-102 negative control |
+| 2026-09-12 | 21:40 | 22:20 | F1 deep-link-over-open-deal confirmation, per-id tag fix, six-case device verification |
 
 ---
 
@@ -154,3 +156,50 @@ root cause. A second-order lesson also applies: the first `am start` attempt
 silently truncated the URL to `?id=42` because the local shell ate the `&`, so
 the first "warm start does nothing" data point was measured against the wrong
 input and had to be redone with the argument quoted for the device shell.
+
+### 2026-09-12 · RES-107 (a logcat filter that made a real bug look fixed)
+**Suggested:** To check whether the deep link had produced a fetch, I filtered
+the run output with `grep -E "I/flutter"`, the shape Flutter's console logs take
+in `flutter run`'s default brief format. Nothing matched, so I began writing up
+"F1 does not reproduce", and spent several minutes suspecting my own RES-107
+change had regressed routing.
+
+**Why it was wrong:** The device was being read in logcat's threadtime format,
+where the same lines appear as `I flutter :` — space, not slash. The filter
+matched nothing because of its own syntax, not because nothing happened. The
+failure mode is the dangerous direction: an empty result reads as evidence of
+absence.
+
+**How it was caught:** Dumping the unfiltered tail instead of trusting the empty
+filter. Every expected line was there.
+
+**Done instead:** Filter on the app's own log prefix, which is identical in both
+formats: `grep -oE "\[rescu [0-9:.]+\] .*"`. Used for every measurement since.
+Standing rule taken from this: before believing a negative from a filter, prove
+the filter can produce a positive.
+
+### 2026-09-12 · F1 / RES-107 (repeating a lesson already written down)
+**Suggested:** Re-running the deep-link repro, I fired
+`adb shell am start -d "rescu://open/deal?id=1&source=push"` — the exact mistake
+already recorded at the bottom of the RES-107 entry above, where the local shell
+eats the `&`. Analytics then logged `source: unknown` and I briefly read that as
+the fix having lost the `source` parameter. The correction I reached for next,
+backslash-escaping the `&`, was also wrong in a quieter way: the backslash
+survived into the intent, so `id=1\` failed `int.tryParse` and the app showed
+"This link does not point at a deal." — a plausible-looking result for a test of
+deep links that was actually testing a malformed one.
+
+**Why it was wrong:** Twice I changed what the app was being asked to do while
+believing I was changing only how I asked. Both produced output consistent with
+a story about the app, which is why neither was obviously a harness fault.
+
+**How it was caught:** A screenshot. The error text named the id as unparseable,
+which no version of the code under test could produce from a well-formed link.
+
+**Done instead:** Quote for the device shell, not the local one:
+`adb shell "am start -a android.intent.action.VIEW -d 'rescu://open/deal?id=7&source=push'"`.
+`source: push` came back immediately. The lesson worth keeping is not about
+quoting — I had already written that one down — but that writing a lesson down
+is not the same as having a check that applies it. The check here is cheap:
+every deep-link measurement now starts by confirming the *expected* id and
+source appear in the log line, before reading anything else from the run.

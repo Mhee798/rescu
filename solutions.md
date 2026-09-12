@@ -607,6 +607,79 @@ reaches `/deal` with `id` and `source` intact as `Get.parameters`, and why
 `Get.arguments` is null: the framework pushes a *name*, never an argument
 object. Nothing on the platform side is misconfigured.
 
+
+**A fourth entry path, found after the above was signed off.** The three cases
+verified above all start with no deal page on the stack. The one that does not —
+a deal page already open, the app backgrounded, a push for a *different* deal —
+was still broken, and it is the case a real push notification produces most
+often. On device: deal 1 open, HOME, `rescu://open/deal?id=7&source=push` →
+`screen_view {screen: /deal}` logged, but **no `GET /deals/7`, no
+`deal_details_view`**, and the screen still showing Mystery Thai Feast. No
+crash, no error — the wrong deal, silently. That fails the ticket's own
+requirement as squarely as the original crash did.
+
+*Cause.* GetX keys an instance by `type.toString() + tag`
+(`get_instance.dart:312`). Both pushes register `DealDetailsController` with no
+tag, so they are the same key; `_insert` no-ops when the key already exists and
+is not dirty, and `_initDependencies` runs `onInit` only when `!isInit`. The
+second route therefore gets the first route's controller, fully initialised,
+holding deal 1. Nothing runs that would notice the new id.
+
+*Fix.* Tag the registration with the route's id, in the binding and on the
+`GetView` that reads it back:
+
+```dart
+Get.lazyPut(() => DealDetailsController(...), tag: Get.parameters['id']);
+page: () => DealDetailsScreen(tag: Get.parameters['id']),
+```
+
+Three source facts this depends on, checked rather than assumed:
+
+- `Get.parameters = match.parameters` is assigned during route resolution
+  (`route_middleware.dart:259`, `:288`), before bindings run — so it is the
+  *incoming* route's id at both call sites.
+- `RouterReportManager._routesKey` is `Map<Route?, List<String>>`
+  (`router_report.dart:10`) — keyed by the Route *object*, not by name. Two
+  `/deal` routes are distinct keys, so popping deal 7 disposes only deal 7's
+  controller and leaves the covered page working.
+- `GetView.tag` is a `final String? tag = null` field, so supplying a tag means
+  shadowing it (`// ignore: overridden_fields`) — the pattern GetView's own doc
+  comment demonstrates.
+
+`_DealBody` had to stop extending `GetView<DealDetailsController>`. It reads
+`controller.quantityLeft` through the untagged `Get.find`, which after this
+change throws "Instance not found" at runtime; `flutter analyze` does not catch
+it, because the type is right and only the tag is missing. It now takes the
+controller as a constructor parameter from the screen that already resolved it.
+
+The RES-107 change that captures `_routeDealId` and `_source` in `onInit` is
+what makes a *covered* deal-1 route safe to rebuild while deal 7 sits on top of
+it: neither value is re-read from the global `Get.parameters` after `onInit`.
+
+**Deliberately not fixed:** two pushes for the *same* id share a tag, so the
+second reuses the first controller and inherits its `_source`. The user sees the
+correct deal, which is the requirement; the cost is analytics attribution on a
+repeat link. Fixing it would mean a per-push identity (a counter or the Route
+itself in the tag), which buys a second controller and a second fetch for a page
+that is already correct on screen. A deep link carrying *no* parsable id has
+tag `null`; two of those share one controller and both show the same "does not
+point at a deal" message, which is also correct.
+
+**Evidence** — PTP_N49 over USB, 2026-09-12 22:00–22:03, debug build.
+
+| Step | Observed |
+|---|---|
+| deal 1 open → HOME → link `id=7` | `GET /deals/7`, `deal_details_view {deal_id: 7, source: push}`, screen renders **Surprise Bakery Box** (deals.json id 7, 3 left) |
+| back | deal 1 renders in full — no crash, no "Instance not found" |
+| Add to bag on deal 1 | `re-checking availability for deal 1` **×1** — RES-103 unaffected |
+| deal 1 open → HOME → link `id=1` | still deal 1, no crash, no second fetch |
+| tap from home feed | `deal_details_view {deal_id: 1, source: home}`, no `GET`, quantity chip renders — the check that would have caught the `_DealBody` regression |
+| in-app dialog, `id=42` | `GET /deals/42`, renders Mystery Japanese Basket |
+
+Screenshots: `docs/res-107/06-deeplink-over-open-deal-fixed.png`,
+`docs/res-107/07-back-returns-to-working-deal-1.png`.
+`fvm flutter analyze` clean, `fvm flutter test` 15/15.
+
 ---
 
 ## Part B — features
