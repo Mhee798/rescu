@@ -62,24 +62,42 @@ keep off-screen card elements alive — 93 builds across 23 parent rebuilds is
 roughly the viewport plus cache extent. The cost here is allocation churn, not
 retention.
 
-## What one rebuild actually costs — the number the fix moves
+## Cross-device comparison — identical procedure, no human variance
 
-Duration of the `Obx` build event, i.e. the closure that rebuilds the whole
-`Scaffold` including the spread over every loaded deal. Same single-swipe
-window on each device:
+Both devices: feed loaded to `page=4`, scrolled back to the top with the FAB,
+one `input swipe` of 400 ms, `profileWidgetBuilds` **off** so the measurement is
+free-running rather than instrumented.
 
-| | n | p50 | p90 | max | total in the swipe |
-|---|---|---|---|---|---|
-| `Obx` — ELE-L29 | 14 | **3.38 ms** | 3.65 ms | 4.19 ms | 47.3 ms |
-| `Obx` — PTP N49 | 23 | 1.37 ms | 1.94 ms | 2.03 ms | 34.0 ms |
-| `DealCard` — ELE-L29 | 75 | 0.89 ms | 1.04 ms | 1.37 ms | 67.5 ms |
-| `DealCard` — PTP N49 | 93 | 0.38 ms | 0.48 ms | 0.57 ms | 36.2 ms |
+| | BUILD /frame | LAYOUT /frame | UI p50 | UI p90 | raster p50 | raster p90 | raster max | frames over budget |
+|---|---|---|---|---|---|---|---|---|
+| ELE-L29 · 60 Hz, budget 16.67 ms | **1.223 ms** | 0.942 ms | 1.94 | 5.60 | **10.15** | **14.02** | **34.01** | 2 (raster) |
+| PTP N49 · 120 Hz, budget 8.33 ms | **1.216 ms** | 0.892 ms | 1.72 | 3.45 | 1.68 | 2.57 | 3.33 | 0 |
 
-On the 2018 device **every scroll frame that rebuilds spends 3.38 ms of a
-16.7 ms budget** reconstructing a tree that differs from the previous one only
-in an `AppBar` elevation flag and whether a FAB is present. That is the cost
-the `Obx` scope change removes, and it is a directly comparable before/after
-figure rather than an inference.
+Two things fall out of this that were not obvious before.
+
+**The widget-build cost is the same on both devices — 1.22 ms per frame.** The
+Dart work does not care how fast the phone is to anything like the degree the
+raster work does. As a *fraction of the frame budget* it is therefore **worse on
+the flagship**: 1.22 ms of 8.33 ms at 120 Hz is 15 %, against 7 % of the
+ELE-L29's 16.67 ms. Causes ① and ② are not a "slow phone" problem.
+
+**Raster is where the older device dies — 6× slower at p50** (10.15 ms against
+1.68 ms), sitting at 61 % of its budget before anything unusual happens, with a
+34.01 ms outlier in an 87-frame window. Raster is where oversized image textures
+are encoded and uploaded, which is cause ③.
+
+So the three causes do not hurt the same device: the rebuild churn is
+proportionally worst at 120 Hz, and the image decode is what actually drops
+frames at 60 Hz.
+
+### Superseded: the per-widget durations reported earlier
+
+An earlier pass reported `Obx` build durations of 3.38 ms (ELE-L29) and 1.37 ms
+(PTP N49). Those were captured with `ext.flutter.profileWidgetBuilds` **enabled**,
+which wraps every widget build in a timeline event, and the spans nest, so the
+numbers double-count and are not free-running frame cost. The phase-level
+`BUILD` figures in the table above replace them. Keeping the retraction visible
+because the superseded numbers were the more dramatic ones.
 
 ## Frame times — the ticket's symptom needs the older device
 
