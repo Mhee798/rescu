@@ -480,12 +480,18 @@ So ② is a real improvement that this device never needed: it matters for a
 longer list, a slower phone, or a feed that changes more often than this one
 does. Stated that way rather than folded into the headline.
 
-*The second device.* The same control/fixed pair was run on the Honor Magic 7
-Pro to check a claim made in the baseline document, that the rebuild churn cost
-the 120 Hz device a larger share of its budget. It does not: pre-fix `BUILD` is
-2.682 ms per frame on the P30 Pro against 1.135 ms on the Magic 7 Pro, which is
-16.1 % against 13.6 % of their respective budgets — comparable, marginally worse
-on the older phone. The fix behaves the same way on both (`BUILD` 1.135 →
+*The second device, and the refresh rate.* The same control/fixed pair was run
+on the Honor Magic 7 Pro, then again with that device forced to 60 Hz, which
+separates the display's refresh rate from the SoC. Pre-fix `BUILD` per frame is
+2.682 ms on the P30 Pro against 1.495 ms on the Magic 7 Pro **at matched
+60 Hz** — a 1.79× hardware difference. Running the Magic 7 Pro at its native
+120 Hz instead costs 1.135 ms per frame but **128.2 ms of build work per second
+of scrolling against 85.8 ms/s at 60 Hz**: the feed was rebuilt once per frame,
+so a faster display ran the waste half again as often. After the fix the two
+refresh rates collapse together at 2.0-2.3 ms/s. This also retires a claim made
+earlier from one sample per device, that the churn cost the 120 Hz device a
+larger *share* of its budget than the older phone — at 16.1 % against 13.62 % it
+does not. The fix behaves the same way on both (`BUILD` 1.135 →
 0.021 ms, UI p90 3.40 → 0.86 ms) but removes no dropped frames there, because
 there were none: zero frames over 8.33 ms before or after. The baseline document
 now carries the correction rather than the original claim.

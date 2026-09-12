@@ -244,43 +244,51 @@ case — the flick figures above are the typical case.
 
 ## Does the display's refresh rate matter?
 
-Two separate effects, and only one of them is about the code.
+Isolated on one device: the Magic 7 Pro forced to 60 Hz and back, same build,
+same procedure. The key that actually controls it on this handset is Honor's
+`SmartModeStatus` — `peak_refresh_rate`/`min_refresh_rate` alone change what
+`dumpsys SurfaceFlinger` reports while idle and are then overridden for the
+foreground app; with `SmartModeStatus=0` the measured inter-frame gap moves from
+8.3 ms to 16.65 ms, which is the only confirmation worth trusting.
 
-**The budget.** `BUILD` costs 1.135 ms per frame on the Magic 7 Pro with the bug
-present. That is 13.6 % of a 120 Hz budget and 6.8 % of a 60 Hz one — the same
-work, twice as close to dropping a frame, purely because the deadline halved.
+| | `BUILD` per frame | share of budget | `BUILD` per second of scrolling | UI p90 |
+|---|---|---|---|---|
+| control @ 120 Hz | 1.135 ms | **13.62 %** | **128.2 ms/s** | 3.40 ms |
+| control @ 60 Hz | 1.495 ms | 8.97 % | 85.8 ms/s | 4.14 ms |
+| fixed @ 120 Hz | 0.021 ms | 0.25 % | 2.3 ms/s | 0.86 ms |
+| fixed @ 60 Hz | 0.035 ms | 0.21 % | 2.0 ms/s | 1.40 ms |
 
-**How often the waste runs.** The defect rebuilt the feed once per *frame*, so
-at 120 Hz it ran twice as often per second. Per-frame cost hides that; per
-second of scrolling does not:
+Three things fall out, and the first is the one I had assumed the wrong way
+round:
 
-| | `BUILD` per frame | `BUILD` per second of scrolling |
-|---|---|---|
-| P30 Pro, 60 Hz, control | 2.682 ms | **155.6 ms/s** |
-| Magic 7 Pro, 120 Hz, control | 1.135 ms | **128.2 ms/s** |
-| P30 Pro, 60 Hz, fixed | 0.040 ms | **2.3 ms/s** |
-| Magic 7 Pro, 120 Hz, fixed | 0.021 ms | **2.0 ms/s** |
+**Per-frame cost is *higher* at 60 Hz, not lower** — 1.495 ms against 1.135 ms.
+Each frame covers twice the scroll distance, so more cards cross into the
+viewport per frame and there is more genuine building to do. The per-frame
+figure is not a property of the code alone; it moves with how far the list
+travels between frames.
 
-Before the fix both devices burn 13-16 % of wall-clock time rebuilding the feed
-while the user scrolls; after, about 0.2 %. The flagship's per-frame figure
-being half the P30's is not it doing less work — it is doing the same work twice
-as often on a faster core.
+**The share of the budget still goes the other way** — 13.62 % at 120 Hz against
+8.97 % at 60 Hz. The deadline halved while the cost rose only 32 %, so the same
+defect sits half again as close to dropping a frame on the faster display.
 
-**What I could not measure.** I tried to isolate the refresh rate from the
-hardware by forcing the Magic 7 Pro to 60 Hz — `settings put system
-peak_refresh_rate 60.0` and `min_refresh_rate 60.0`, confirmed by
-`dumpsys SurfaceFlinger` reporting `activeFrameRateMode={fps=60.00 Hz}`. It did
-not hold for the app: both runs recorded a median inter-frame gap of 8.3 ms,
-i.e. 120 Hz, so the device overrode the setting for the foreground app. The two
-rows above therefore still differ in SoC as well as refresh rate and cannot
-separate the two. Settings restored afterwards.
+**Per second of scrolling, 120 Hz costs 1.5× more CPU** — 128.2 ms/s against
+85.8 ms/s. This is the defect's real price: the feed was rebuilt once per frame,
+so a faster display simply ran the waste more often. After the fix the two
+collapse together at 2.0-2.3 ms/s, because the rebuild is no longer tied to the
+frame rate at all.
 
-Those two runs are not wasted, though — they are an unplanned replication. The
-"60 Hz" control and the 120 Hz control are separate builds, installs and
-measurement sessions, and produced `BUILD` per frame of **1.135 ms** and
-**1.138 ms**. Three tenths of a percent apart, which is the best evidence in
-this document that the procedure itself is stable and the differences reported
-elsewhere are real.
+**A confound removed elsewhere in this document.** The cross-device comparison
+earlier compares a 60 Hz P30 Pro against a 120 Hz Magic 7 Pro and therefore
+mixes SoC with refresh rate. At matched 60 Hz the pre-fix per-frame cost is
+**2.682 ms** (P30 Pro) against **1.495 ms** (Magic 7 Pro) — a 1.79× hardware
+difference, not the 2.4× that comparison implied.
+
+*Replication.* An earlier attempt at this, before `SmartModeStatus` was found,
+ran at 120 Hz without my noticing until the cadence was checked. Its numbers are
+not wasted: two independent builds, installs and sessions, both at 120 Hz, gave
+`BUILD` per frame of 1.135 ms and 1.138 ms — 0.3 % apart. That is the best
+evidence here that the procedure is stable and the differences reported
+elsewhere are real rather than drift.
 
 ## Memory — grows, but nothing like "until the OS kills the app"
 
