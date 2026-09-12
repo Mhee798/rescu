@@ -454,6 +454,76 @@ will be laid out with a recommendation rather than one being chosen silently.
 
 ---
 
+## Findings logged, not fixed
+
+Defects found while working on something else. Recorded here rather than fixed,
+per the working agreement on scope: a cause that lives on the ticket's path gets
+followed across files, anything else gets written down.
+
+### Stale `quantityLeft` lets the bag exceed real stock — *reproduced on device*
+
+`DealDetailsController` holds the remaining-stock number **twice**, and only one
+of them is refreshed:
+
+| | used for | refreshed by `_recheckAvailability`? |
+|---|---|---|
+| `_quantityLeft` | the "N left" chip | yes |
+| `_deal.value.quantityLeft` | the cap inside `CartService.add` | **no** |
+
+`_recheckAvailability` has the fresh model in hand as `fresh` and writes only
+`_quantityLeft`. `addToCart` then passes the stale `_deal.value`, and
+`cart_service.dart:18` caps on `deal.quantityLeft` — the old number.
+
+**Reproduced end to end**, 2026-09-12 19:37–19:42 on PTP N49: opened *Chef's Thai
+Bundle* (id 2, 4 left), bought 2 — backend stock 4 → 2. Returned to the home
+feed, which had not reloaded and still showed "4 left", and reopened the card so
+the controller received the stale model as `Get.arguments`. Adding to the bag
+triggered the re-check and the chip correctly updated to **2 left** — and the bag
+still accepted items up to **4**, total ฿504, with
+`cart: cannot add more of deal 2` only appearing at the fourth. Screenshot:
+`docs/findings/stale-stock-cap.png`.
+
+The sharp edge is not that the data is stale; it is that **the screen was
+displaying the correct number, 2, at the moment it accepted the fourth item**.
+The UI and the validation disagreed inside the same frame.
+
+One line closes it — `_deal.value = fresh;` beside the existing write — and that
+line sits inside the RES-107 diff, since `_recheckAvailability` was restructured
+there. It is deliberately not taken: it is not on RES-107's causal path (the
+deep-link null cast), and stock correctness is the subject of **F-3**, where
+reservations replace this client-side cap entirely. If F-3 is not reached, this
+should be fixed on its own.
+
+### The cart worker is never disposed
+
+`deal_details_controller.dart` stores the `Worker` from `ever(...)` but has no
+`onClose()` override, and GetX 4.7.3 does not dispose workers for a controller
+(nothing under `get_state_manager/` or `get_instance/` references `Worker`). Every
+deal screen visited leaves a live listener on the session-long
+`CartService.itemCount`, so one add-to-bag fires one `fetchById` per deal viewed
+this session. Observed directly during the RES-107 and stale-stock runs: deal 2
+logged `re-checking availability` **twice** after being opened twice.
+
+This is **RES-103**, so it is that ticket's fix, not a finding to act on here.
+Noted because RES-107 changed its shape: `onClose` can now run *before* the
+worker is created on the deep-link path, so "store the `Worker`, dispose it in
+`onClose`" would dispose null and leak unconditionally. The `isClosed` guard in
+`_adopt` closes that from the other side, but RES-103 has to account for the
+ordering rather than assume it.
+
+### `refreshDeals` has no error handling
+
+`home_controller.dart:58-64` has no `try`/`catch`. A failed refresh never reaches
+`refreshController.refreshCompleted()`, so the pull-to-refresh spinner hangs
+permanently, and `_page` has already been reset to 1 while `deals` still holds the
+previous content. Adjacent to **RES-104** and left for it.
+
+### Hong Kong stores are built on the wrong market clock
+
+See RES-106 Edge cases. Out of bounds — the cause is in `fake_api_service.dart`.
+
+---
+
 ## AI usage log
 
 Full running log: [`docs/ai-log.md`](docs/ai-log.md), appended to during the work.
