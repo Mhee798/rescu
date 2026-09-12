@@ -225,6 +225,16 @@ stayed subscribed to a session-long service, still holding its controller, its
 - *One re-check still fires after the fix, and that is correct.* A live details
   screen is supposed to re-check its own stock when the cart changes — that is
   the feature. The number to expect is 1, not 0.
+- *After the RES-107 tag change, the number to expect is one per deal page
+  currently on the stack, not one full stop.* Tagging by route id means a deep
+  link over an open deal page produces two live controllers, so two live
+  workers. Measured 22:16: with deal 7 and deal 1 both on the stack, one Add to
+  bag logged `re-checking availability for deal 7` **and** `... deal 1`;
+  popping deal 1 and adding again logged one. That is bounded by the navigation
+  stack and released on pop — the opposite of the unbounded growth this ticket
+  is about — and each of those screens is live and supposed to refresh its own
+  stock. Worth stating because a reader counting re-checks after a deep link
+  will see 2 and reasonably suspect the leak is back.
 - *Deep-link path where `onClose` precedes registration.* Covered by the
   `isClosed` guard rather than by disposal; see above.
 - *`retry()` re-registering.* `_watchCart` returns early when `_cartWorker != null`
