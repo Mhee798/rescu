@@ -41,16 +41,14 @@ void main() {
     });
   });
 
-  group('isToday', () {
-    test('delegates to isTodayAt with the current local time', () {
-      // The seam is only worth having if the getter production calls actually
-      // uses it. `isToday => isTodayAt(DateTime.now().toUtc())` would satisfy
-      // every other test here while putting the filter bug straight back.
-      final w = window();
-
-      expect(w.isToday, w.isTodayAt(DateTime.now()));
-    });
-  });
+  // No test for `isToday` itself. It reads `DateTime.now()`, which is the whole
+  // reason `isTodayAt` exists, and the only assertion available —
+  // `isToday == isTodayAt(DateTime.now())` — restates the getter's body. It also
+  // could not distinguish the variant it would be written to catch:
+  // `isTodayAt(DateTime.now().toUtc())` is identical in behaviour, because
+  // `isTodayAt` normalises its argument with `toLocal()`. Verified rather than
+  // assumed. The delegation is covered by reading four lines, not by a test
+  // that would only look like coverage.
 
   group('isTodayAt', () {
     test('is true on the local day the window starts', () {
@@ -94,14 +92,45 @@ void main() {
   });
 
   group('instant-based members are unaffected by the UTC flag', () {
-    test('isOpenNow and untilStart agree with each other', () {
-      final w = window();
+    // These read DateTime.now(), so the fixture is built relative to now rather
+    // than pinned to an instant. A fixed instant would quietly stop asserting
+    // anything the moment wall-clock time passed it, while still reporting
+    // green — the same failure mode the label group guards against.
+    PickupWindowModel windowOffsetFromNow(Duration fromNow, Duration length) {
+      final start = DateTime.now().toUtc().add(fromNow);
+      return PickupWindowModel.fromJson({
+        'start': start.toIso8601String(),
+        'end': start.add(length).toIso8601String(),
+      });
+    }
 
-      // Both read DateTime.now(), so assert the relationship rather than a
-      // fixed value: a window that has not started yet cannot be open.
-      if (w.untilStart > Duration.zero) {
-        expect(w.isOpenNow, isFalse);
-      }
+    test('a window that has not started yet is not open', () {
+      final w = windowOffsetFromNow(
+        const Duration(hours: 2),
+        const Duration(hours: 3),
+      );
+
+      expect(w.untilStart, greaterThan(Duration.zero));
+      expect(w.isOpenNow, isFalse);
+    });
+
+    test('a window in progress is open', () {
+      final w = windowOffsetFromNow(
+        const Duration(hours: -1),
+        const Duration(hours: 3),
+      );
+
+      expect(w.untilStart, lessThan(Duration.zero));
+      expect(w.isOpenNow, isTrue);
+    });
+
+    test('a window that has already ended is not open', () {
+      final w = windowOffsetFromNow(
+        const Duration(hours: -5),
+        const Duration(hours: 3),
+      );
+
+      expect(w.isOpenNow, isFalse);
     });
   });
 }
