@@ -75,11 +75,26 @@ free-running rather than instrumented.
 
 Two things fall out of this that were not obvious before.
 
-**The widget-build cost is the same on both devices — 1.22 ms per frame.** The
-Dart work does not care how fast the phone is to anything like the degree the
-raster work does. As a *fraction of the frame budget* it is therefore **worse on
-the flagship**: 1.22 ms of 8.33 ms at 120 Hz is 15 %, against 7 % of the
-ELE-L29's 16.67 ms. Causes ① and ② are not a "slow phone" problem.
+**The widget-build cost came out the same on both devices here — 1.22 ms per
+frame.** ~~As a fraction of the frame budget it is therefore worse on the
+flagship: 1.22 ms of 8.33 ms at 120 Hz is 15 %, against 7 % of the ELE-L29's
+16.67 ms.~~
+
+**That conclusion did not survive being checked.** It rested on one sample per
+device. Re-measured later with three swipes per side while building the
+before/after comparison, the pre-fix figures are `BUILD` **2.682 ms** per frame
+on the ELE-L29 and **1.135 ms** on the PTP N49 — not equal, a factor of 2.4.
+As a share of each device's budget that is **16.1 %** against **13.6 %**: close,
+but slightly *worse* on the older device, which is the opposite of what the
+sentence above claimed. The striking version was an artifact of a single
+sample. What survives is the weaker and duller statement: the rebuild cost is a
+similar share of the budget on both, so causes ① and ② are not only a slow-phone
+problem — but the flagship is not the one carrying more of it.
+
+*Post-fix, PTP N49, same three-swipe procedure:* `BUILD` 1.135 → **0.021 ms**
+per frame, `LAYOUT` 0.729 → **0.092**, UI p90 3.40 → **0.86 ms**. Zero frames
+over the 8.33 ms budget before or after — there was no jank on this device to
+remove, only waste.
 
 **Raster is where the older device dies — 6× slower at p50** (10.15 ms against
 1.68 ms), sitting at 61 % of its budget before anything unusual happens, with a

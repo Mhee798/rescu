@@ -480,6 +480,16 @@ So ② is a real improvement that this device never needed: it matters for a
 longer list, a slower phone, or a feed that changes more often than this one
 does. Stated that way rather than folded into the headline.
 
+*The second device.* The same control/fixed pair was run on the Honor Magic 7
+Pro to check a claim made in the baseline document, that the rebuild churn cost
+the 120 Hz device a larger share of its budget. It does not: pre-fix `BUILD` is
+2.682 ms per frame on the P30 Pro against 1.135 ms on the Magic 7 Pro, which is
+16.1 % against 13.6 % of their respective budgets — comparable, marginally worse
+on the older phone. The fix behaves the same way on both (`BUILD` 1.135 →
+0.021 ms, UI p90 3.40 → 0.86 ms) but removes no dropped frames there, because
+there were none: zero frames over 8.33 ms before or after. The baseline document
+now carries the correction rather than the original claim.
+
 *What ③ is worth.* Nothing measurable in frame time on these gestures — raster
 p50 moves between 6.75 and 8.27 ms across all five builds with no ordering. Its
 attributed improvement is the decode and cache figures above: 10,000 KB → 3,781
