@@ -659,6 +659,33 @@ Three source facts this depends on, checked rather than assumed:
   shadowing it (`// ignore: overridden_fields`) — the pattern GetView's own doc
   comment demonstrates.
 
+*Why reading global state inside a page builder is safe here, which is the first
+thing worth attacking about this design.* Flutter does invalidate a route's page
+widget on ordinary events: `_ModalScopeState.didChangeDependencies` sets
+`_page = null` (`flutter/lib/src/widgets/routes.dart:996`) and
+`changedExternalState` calls `_forceRebuildPage()` (`:2044`) — a rotation, a
+keyboard, a theme change. If `page()` re-ran, deal 1's covered route would
+rebuild with whatever `Get.parameters` held at that moment — `'7'` — and resolve
+deal 7's controller. The bug back, triggered by turning the phone.
+
+It cannot, because `GetPageRoute` caches: `_getChild()` opens with
+`if (_child != null) return _child!;` (`default_route.dart:94-95`), runs the
+bindings and `page()` inside that guard, and `buildContent` returns the cache
+(`:114-117`). Flutter's re-entry into `buildPage` hits the cached widget, so
+`page()` and the bindings run exactly once per route instance and the tag is
+frozen at that route's own resolution. The binding and the builder also read
+`Get.parameters` inside the same `_getChild()` call, which is why they cannot
+disagree with each other.
+
+**Known residual, not closed.** That single read happens at first content build,
+not at route resolution where `Get.parameters` was assigned. If a second route
+resolution lands in between — two navigations inside one frame — both reads pick
+up the later id. They stay consistent with each other, so there is no tag
+mismatch and no crash; the controller is simply keyed to, and fetches, the wrong
+deal. Not reproduced, and no cheap close: `page: () =>` is handed no access to
+its own route's `settings`, only the global. Naming it is worth more than
+presenting the design as airtight.
+
 `_DealBody` had to stop extending `GetView<DealDetailsController>`. It reads
 `controller.quantityLeft` through the untagged `Get.find`, which after this
 change throws "Instance not found" at runtime; `flutter analyze` does not catch
@@ -691,7 +718,14 @@ refresh would be deal 7's data, unless it refetched on pop as well. That is
 state being reassigned until the visible case looks right, which §3 names.
 
 **Deliberately not fixed:** two pushes for the *same* id share a tag, so the
-second reuses the first controller and inherits its `_source`. The user sees the
+second reuses the first controller and inherits its `_source`. Sharing one
+instance across two live routes does not risk the obvious thing — the second
+route popping and deleting a controller the first still needs.
+`reportDependencyLinkedToRoute` runs inside `_initDependencies` and only when
+`!isInit` (`get_instance.dart:204-211`), so the instance is linked to the first
+route alone. The second route's entry in `_routesKey` does not exist, its
+disposal iterates nothing (`router_report.dart:91`), and the only reachable pop
+order is second-then-first. The user sees the
 correct deal, which is the requirement; the cost is analytics attribution on a
 repeat link. Fixing it would mean a per-push identity (a counter or the Route
 itself in the tag), which buys a second controller and a second fetch for a page
