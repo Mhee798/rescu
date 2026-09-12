@@ -135,21 +135,34 @@ class HomeScreen extends GetView<HomeController> {
           ),
         );
       }),
-      // The keys are load-bearing, not decoration. `Obx` cannot return null, so
-      // `Scaffold` no longer sees the null-to-widget change it used to animate
-      // on; `_FloatingActionButtonTransition.didUpdateWidget` bails out when
-      // both children are non-null and their keys compare equal
-      // (`scaffold.dart:1368`), which two unkeyed widgets do. Distinct keys
-      // restore the scale-in.
-      floatingActionButton: Obx(
-        () => controller.showScrollToTop.value
-            ? FloatingActionButton.small(
-                key: const ValueKey('scroll-to-top'),
-                onPressed: controller.scrollToTop,
-                child: const Icon(Icons.arrow_upward),
-              )
-            : const SizedBox.shrink(key: ValueKey('no-fab')),
-      ),
+      // `Obx` cannot return null, and `Scaffold` animates its FAB only when
+      // *it* rebuilds with a different `floatingActionButton`
+      // (`_FloatingActionButtonTransition.didUpdateWidget`). A narrow `Obx`
+      // rebuilds itself and never the `Scaffold`, so that path is unreachable
+      // here and the built-in scale-in is gone whatever the children are. The
+      // old code got the animation for free because the whole `Scaffold` was
+      // inside the `Obx` — the thing this ticket removed.
+      //
+      // Animating here restores it without giving the scope back. The button
+      // stays mounted and is scaled instead, so it keeps its layout slot while
+      // hidden; `IgnorePointer` is what stops a zero-scale button from
+      // swallowing taps, since `Transform` affects paint and hit-testing but
+      // not layout.
+      floatingActionButton: Obx(() {
+        final show = controller.showScrollToTop.value;
+        return IgnorePointer(
+          ignoring: !show,
+          child: AnimatedScale(
+            scale: show ? 1 : 0,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeInOut,
+            child: FloatingActionButton.small(
+              onPressed: controller.scrollToTop,
+              child: const Icon(Icons.arrow_upward),
+            ),
+          ),
+        );
+      }),
     );
   }
 
