@@ -8,6 +8,9 @@ import 'package:rescu/feature/order/widget/pickup_countdown.dart';
 /// kept and never cancelled, so it went on calling `setState` after the route
 /// had popped and the State was defunct.
 void main() {
+  String shownText(WidgetTester tester) =>
+      tester.widget<Text>(find.textContaining('Opens in')).data!;
+
   Future<void> pumpCountdown(WidgetTester tester, DateTime pickupStart) {
     return tester.pumpWidget(
       MaterialApp(
@@ -25,13 +28,15 @@ void main() {
     );
     await tester.pump(const Duration(seconds: 2));
 
-    // No assertion is needed here: flutter_test fails the test itself with
-    // "A Timer is still pending even after the widget tree was disposed" if the
-    // timer outlives the widget, which is exactly the defect. Before the fix
-    // this test fails on that invariant.
+    // This case has no assertion of its own: it borrows flutter_test's
+    // "A Timer is still pending even after the widget tree was disposed"
+    // invariant, which is exactly the defect. That is a dependency, not
+    // elegance — if the framework ever moves that check, this quietly becomes a
+    // test that always passes. There is no clean way to assert a cancelled
+    // timer directly, so the trade is accepted and written down.
   });
 
-  testWidgets('survives several ticks while mounted', (tester) async {
+  testWidgets('rebuilding on each tick does not throw', (tester) async {
     await pumpCountdown(tester, DateTime.now().add(const Duration(hours: 2)));
 
     for (var i = 0; i < 3; i++) {
@@ -39,18 +44,37 @@ void main() {
     }
 
     expect(find.textContaining('Opens in'), findsOneWidget);
+
+    // Named for what it does. `tester.pump` advances FakeAsync's clock, which
+    // is what fires the periodic timer, but the widget derives `remaining` from
+    // `DateTime.now()`, which flutter_test does not fake — measured: the
+    // rendered string is identical across six simulated seconds. So this covers
+    // "three extra builds are harmless", not "the number counts down". The
+    // arithmetic itself is verified on device, not here.
   });
 
-  testWidgets('shows minutes and seconds under an hour', (tester) async {
-    await pumpCountdown(tester, DateTime.now().add(const Duration(minutes: 5)));
+  testWidgets('renders mm:ss under an hour', (tester) async {
+    await pumpCountdown(
+      tester,
+      // The half-second of slack keeps the expected value off the boundary.
+      DateTime.now().add(const Duration(minutes: 5, milliseconds: 500)),
+    );
 
-    expect(find.textContaining('Opens in 0'), findsOneWidget);
+    // The format is pinned exactly, because F-1 replaces this widget and has to
+    // keep producing mm:ss. The value allows one second of drift for a slow run.
+    expect(shownText(tester), matches(RegExp(r'^Opens in \d{2}:\d{2}$')));
+    expect(shownText(tester), anyOf('Opens in 05:00', 'Opens in 04:59'));
   });
 
-  testWidgets('shows hours and minutes over an hour', (tester) async {
-    await pumpCountdown(tester, DateTime.now().add(const Duration(hours: 3)));
+  testWidgets('renders hours and minutes over an hour', (tester) async {
+    await pumpCountdown(
+      tester,
+      DateTime.now()
+          .add(const Duration(hours: 3, minutes: 30, milliseconds: 500)),
+    );
 
-    expect(find.textContaining('h '), findsOneWidget);
+    expect(shownText(tester), matches(RegExp(r'^Opens in \d+h \d{1,2}m$')));
+    expect(shownText(tester), anyOf('Opens in 3h 30m', 'Opens in 3h 29m'));
   });
 
   testWidgets('says the window is open once the start time has passed',

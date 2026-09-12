@@ -63,7 +63,10 @@ It is one timer **per card**, not one per screen. `orders_screen.dart:95` render
 a `PickupCountdown` for every *active* order, and the seed data has three
 (`9001 READY`, `9002 CONFIRMED`, `9003 CONFIRMED`), so a single visit leaks three
 timers and each one throws separately, once a second, for the rest of the
-session.
+session. The count is exactly three rather than "up to three" because
+`orders_screen.dart:23` is a plain `ListView(children: […])` rather than
+`.builder`, so every tile mounts immediately regardless of viewport — which is
+also why the reproduction is deterministic.
 
 **Fix** Keep the handle in a `Timer? _ticker` and cancel it in a `dispose()`
 override. That is the whole fix: the cause is an uncancelled timer, so the fix
@@ -83,13 +86,28 @@ compounds.
   window can also be entered while the screen is open and the label has to change
   then, so the timer has to keep running. Unchanged.
 - *Only one `StatefulWidget` in the app.* Checked rather than assumed:
-  `grep -rln StatefulWidget lib/` returns this file alone, and `Timer` appears
-  nowhere else outside the fake backend. There is no sibling instance of this bug
-  to chase.
-- *Per-second `setState(() {})` rebuilds the whole countdown widget*, which is
-  acceptable for a small row but is precisely what **F-1** must not do at feed
-  scale. This widget is the template F-1 replaces, and the requirement there is
-  that only the changing `Text` rebuilds.
+  `createState` appears once in `lib/`, at `pickup_countdown.dart:14`, and
+  `Timer` appears nowhere else outside the fake backend. The one other
+  subscription of this shape is `scrollController.addListener(_onScroll)` at
+  `home_controller.dart:36`, and it is **not** a sibling instance:
+  `HomeController.onClose` calls `scrollController.dispose()`, which drops its
+  listeners. There is nothing else to chase.
+- *What the per-second `setState(() {})` actually costs.* Not "rebuilds the whole
+  widget": the `Icon` and the `SizedBox` are `const`
+  (`pickup_countdown.dart:43-45`), so their elements are reused. Each tick costs
+  one `build` call, a `Row` re-layout, and reconstruction of the single non-const
+  `Text`. Acceptable for one row; precisely what **F-1** must not do at feed
+  scale, where the requirement is that only the countdown `Text` rebuilds — not
+  the card, not the list. Stated exactly because F-1's claim will be measured
+  with Track Widget Builds and held against this one.
+- **Not handled, deliberately:** *the timer also runs while the screen is merely
+  covered.* Navigating My orders → a deal leaves the orders route in the stack
+  with its tiles mounted, so three timers keep firing and rebuilding offscreen
+  widgets until the route is popped. That is not the reported crash and not on
+  its causal path — `dispose` is never called, so nothing is used after
+  disposal — but it is the same resource question one step over, and it is
+  exactly the problem F-1 has to solve at 100× scale. A `TickerMode` /
+  route-aware pause belongs with F-1's central ticker, not here.
 
 **Evidence** Reproduced on PTP N49 over USB, 2026-09-12 20:25. Opened My orders
 (three active cards, countdowns reading 17:49 / 46:49 / 2h 11m), pressed back,
@@ -104,12 +122,35 @@ setState() called after dispose(): _PickupCountdownState#84813 (defunct, not mou
   #3  _Timer._runTimers
 ```
 
-`test/pickup_countdown_test.dart` covers it without a device.
-`flutter_test` asserts its own invariant — *"A Timer is still pending even after
-the widget tree was disposed"* — so the disposal test needs no assertion of its
-own. Run against the unfixed widget, **all five cases fail**, because every test
-that mounts this widget leaves a timer pending at teardown. After the fix the
-suite is 15/15.
+`test/pickup_countdown_test.dart` covers it without a device — with the
+following honest limits, because the suite is weaker than its pass count
+suggests.
+
+*The disposal case has no assertion of its own.* It borrows `flutter_test`'s
+*"A Timer is still pending even after the widget tree was disposed"* invariant.
+That is a dependency rather than elegance: if the framework moves that check,
+the case silently becomes one that always passes. There is no clean way to
+assert a cancelled timer directly, so the trade is taken and recorded.
+
+*"All five cases fail against the unfixed widget" is not the strength it looks
+like.* Four of them fail on the same pending-timer invariant rather than on their
+own assertions — they would fail identically whether the label logic were perfect
+or completely broken. So the file holds **one** regression test for RES-102 and
+four rendering characterisations that happen to trip the same wire. If someone
+later reintroduces the leak *and* breaks the label, five failures all say the
+same thing and none of them says the label broke.
+
+*The countdown arithmetic is not unit-covered.* `tester.pump` advances
+`FakeAsync`'s clock, which is what fires the periodic timer, but the widget
+derives `remaining` from `DateTime.now()`, which `flutter_test` does not fake.
+Measured, not assumed: the rendered string is byte-identical across six simulated
+seconds. The tick test is therefore named for what it does — *rebuilding on each
+tick does not throw* — and the arithmetic is verified only by the device
+observation below. The rendered **format** is pinned exactly
+(`^Opens in \d{2}:\d{2}$` and `^Opens in \d+h \d{1,2}m$`) so that F-1, which
+replaces this widget, inherits a net for the format it must keep producing.
+
+After the fix the suite is 15/15.
 
 Re-verified on device: countdowns tick (16:54 → 16:50 and 45:54 → 45:50 across a
 four-second sample, so the fix did not freeze the feature), and navigating in and
