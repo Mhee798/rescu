@@ -49,15 +49,72 @@ contaminate the comparison.
 **Evidence** —
 
 ## RES-102 · Crash after leaving My orders
-**Status** not started
+**Status** fixed — reproduced, fixed, covered by a widget test, re-verified on device
 
 **Symptom** `setState() called after dispose()` a couple of seconds after navigating back from My orders.
 
-**Root cause** —
-**Fix** —
-**Alternative rejected** —
-**Edge cases** —
-**Evidence** —
+**Root cause** `_PickupCountdownState.initState` starts a
+`Timer.periodic(const Duration(seconds: 1), …)` whose handle is discarded, and
+the class has no `dispose()` at all. The timer therefore outlives the widget:
+after the route pops, its callback keeps calling `setState` on a State that
+Flutter has already marked defunct.
+
+It is one timer **per card**, not one per screen. `orders_screen.dart:95` renders
+a `PickupCountdown` for every *active* order, and the seed data has three
+(`9001 READY`, `9002 CONFIRMED`, `9003 CONFIRMED`), so a single visit leaks three
+timers and each one throws separately, once a second, for the rest of the
+session.
+
+**Fix** Keep the handle in a `Timer? _ticker` and cancel it in a `dispose()`
+override. That is the whole fix: the cause is an uncancelled timer, so the fix
+cancels the timer.
+
+**Alternative rejected** *Guard the callback with `if (mounted) setState(…)`.*
+This is the quickest edit and it does stop the exception, which is exactly why it
+is worth naming: the timer still runs every second for the lifetime of the app,
+still holds a reference to a dead `State`, and still wakes the isolate. It
+converts a loud crash into a silent leak — the symptom disappears and the cause
+is untouched. With three cards per visit and repeated navigation the leak
+compounds.
+
+**Edge cases**
+- *A countdown that reaches zero* still renders "Pickup window is open" and keeps
+  ticking. Stopping the timer at zero would be a small optimisation, but the
+  window can also be entered while the screen is open and the label has to change
+  then, so the timer has to keep running. Unchanged.
+- *Only one `StatefulWidget` in the app.* Checked rather than assumed:
+  `grep -rln StatefulWidget lib/` returns this file alone, and `Timer` appears
+  nowhere else outside the fake backend. There is no sibling instance of this bug
+  to chase.
+- *Per-second `setState(() {})` rebuilds the whole countdown widget*, which is
+  acceptable for a small row but is precisely what **F-1** must not do at feed
+  scale. This widget is the template F-1 replaces, and the requirement there is
+  that only the changing `Text` rebuilds.
+
+**Evidence** Reproduced on PTP N49 over USB, 2026-09-12 20:25. Opened My orders
+(three active cards, countdowns reading 17:49 / 46:49 / 2h 11m), pressed back,
+and logcat produced **three** separate unhandled exceptions within seconds — one
+per card, from three distinct State objects:
+
+```
+setState() called after dispose(): _PickupCountdownState#d0855 (defunct, not mounted)
+setState() called after dispose(): _PickupCountdownState#f20d8 (defunct, not mounted)
+setState() called after dispose(): _PickupCountdownState#84813 (defunct, not mounted)
+  #2  _PickupCountdownState.initState.<anonymous closure> (pickup_countdown.dart:22:7)
+  #3  _Timer._runTimers
+```
+
+`test/pickup_countdown_test.dart` covers it without a device.
+`flutter_test` asserts its own invariant — *"A Timer is still pending even after
+the widget tree was disposed"* — so the disposal test needs no assertion of its
+own. Run against the unfixed widget, **all five cases fail**, because every test
+that mounts this widget leaves a timer pending at teardown. After the fix the
+suite is 15/15.
+
+Re-verified on device: countdowns tick (16:54 → 16:50 and 45:54 → 45:50 across a
+four-second sample, so the fix did not freeze the feature), and navigating in and
+out of My orders five times — fifteen timers created and discarded — produced
+**zero** `setState() called after dispose()` and zero unhandled exceptions.
 
 ## RES-103 · Requests pile up the longer you browse
 **Status** not started
