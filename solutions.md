@@ -157,6 +157,25 @@ four-second sample, so the fix did not freeze the feature), and navigating in an
 out of My orders five times — fifteen timers created and discarded — produced
 **zero** `setState() called after dispose()` and zero unhandled exceptions.
 
+*Negative control.* Zero exceptions could equally mean the procedure had stopped
+detecting them, so the same run was repeated against a build with only
+`pickup_countdown.dart` reverted to its pre-fix state — one file changed, same
+device, same taps, `logcat -c` before each run:
+
+| build | `setState() after dispose` | `Unhandled Exception` |
+|---|---|---|
+| reverted to the buggy version | **3** | **3** |
+| fixed | **0** | **0** |
+
+Then restored and re-run: 0 again. So the zero means the defect is gone, not
+that the measurement went blind.
+
+One number deliberately not claimed: the control logged three exceptions over a
+ten-second wait, i.e. one per State rather than one per State per tick. Whether
+that is Android's repeated-line suppression or Flutter collapsing identical
+errors was not established, so nothing in this section rests on the throw
+*frequency* — only on 3 versus 0.
+
 ## RES-103 · Requests pile up the longer you browse
 **Status** fixed — reproduced, fixed, re-verified on device
 
@@ -713,7 +732,34 @@ ordering decisions.)*
 ## Design questions
 
 **Q1 — `GetxController` lifecycle vs widget `State` lifecycle; one Part A bug caused by confusing them.**
-—
+
+A widget `State` is owned by the element tree. Flutter creates it, calls
+`initState`, and calls `dispose` when the element leaves the tree; the lifecycle
+is positional and the framework drives every step. A `GetxController` is owned by
+GetX's service locator, not by any widget. Its `onInit`/`onClose` are driven by
+registration and deletion — under the default `SmartManagement.full`
+(`get_interface.dart:10`) a route's `Bindings` registers it and popping the route
+deletes it — so its life is tied to a *route*, not to a subtree, and the same
+instance can outlive or be shared across widgets that a `State` never would.
+
+The crucial asymmetry is what each one cleans up. `State.dispose` is a hook the
+framework guarantees will run; `GetxController.onClose` is the same guarantee, but
+GetX does **not** clean up the things a controller creates. In `get` 4.7.3 nothing
+under `get_state_manager/` or `get_instance/` so much as references `Worker`.
+
+**RES-103** is the bug that exists because of that confusion. The controller calls
+`ever(cartService.itemCount, …)` and discards the returned `Worker`, as if
+registering the listener inside `onInit` bound it to the controller the way
+`initState` work is bound to a `State`. It does not. `CartService` is
+`permanent: true`, so the subscription outlives every screen, and each deal page
+visited leaves another listener behind — four views produced four re-check
+requests from one cart change. GetX disposed the controller correctly; the
+subscription was never its to dispose, and `ever` returning a `Worker` is the API
+saying so.
+
+RES-102 is the mirror image and *not* the answer here: no controller is involved
+at all, just a `State` that never implemented `dispose`. Naming it would be
+guessing at the author's habits; RES-103's mechanism names itself.
 
 **Q2 — When does wrapping a large subtree in a single `Obx` hurt, and how do you scope reactivity?**
 —
