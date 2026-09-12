@@ -285,7 +285,7 @@ screen is explicitly not an acceptable resolution.
   (`rx_impl.dart:101`) the screen would not even flicker — a control that
   provably cannot change anything. Found by review; the inert button was
   reproduced on device (three taps, no log output, pixel-identical screen)
-  before being removed.
+  before being removed, and the removal re-verified on device — see below.
 - *Unknown or non-numeric id.* `getDealById` (`fake_api_service.dart:82-90`)
   has **no injected flakiness at all** — unlike `reserveDeal` and `checkout`,
   which fail on `_mutationCounter % 5 == 3`, it does latency and then either
@@ -388,8 +388,18 @@ for deal 42 — no duplicate subscription. (It also fires once for deal 1, viewe
 earlier in the same session: that is RES-103 reproducing incidentally, and is
 left alone here.)
 
+**Failure-state re-verification** after the retry change, on PTP N49 over USB,
+2026-09-12 20:04–20:06:
+
+| Link | Result |
+|---|---|
+| `?id=abc` | "This link does not point at a deal." · **no retry action** · back arrow present |
+| `?id=999` | "This deal is no longer available." · retry offered, and tapping it issues a second `GET /deals/999` (20:05:34 then 20:05:39) rather than doing nothing |
+| `?id=42` | full page, cold start, unchanged |
+
 Screenshots: `docs/res-107/03-cold-start-fixed.png`,
-`docs/res-107/04-unknown-id-error-state.png`.
+`docs/res-107/04-unknown-id-error-state.png`,
+`docs/res-107/05-unparseable-id-no-retry.png`.
 `fvm flutter analyze` clean, `fvm flutter test` 1/1.
 
 *Where the platform route enters the app.* There is no deep-link code in this
