@@ -288,8 +288,10 @@ under Edge cases above.
 
 ## RES-105 · Home feed is janky and memory keeps climbing
 **Status** three causes found and fixed, verified against a negative control on
-a 2018 device. One of the two symptoms in the ticket does not reproduce, and the
-worst case I found did not improve — both stated below rather than omitted.
+a 2018 device: on the gesture that actually janks, dropped frames halve, 26 → 15
+across three runs. One of the two symptoms in the ticket does not reproduce at
+all, and the worst case I found did not improve — both stated below rather than
+omitted.
 
 **Symptom** Dropped frames while scrolling; memory grows until the OS kills the
 app. The ticket states there is more than one contributing cause.
@@ -503,6 +505,33 @@ KB held per image, the 100 MB cache going from ten images to twenty-six, and
 peak Native Heap 38,248 kB → 34,963 kB. The 73.16 ms `UploadTextureToPrivate`
 frame that motivated it belongs to the scroll-to-top case, and that case is too
 noisy to claim from — see below.
+
+*The gesture that actually shows the symptom.* A 400 ms scripted swipe never
+dropped a frame on either build — the dropped frames in the baseline came from a
+person flicking the device, which is not reproducible. A fast scripted fling
+(`input swipe 540 600 540 2200 60`, six in a row, no taps anywhere in the
+script) reproduces it and is repeatable. Three runs per build, all 122 deals
+loaded, P30 Pro:
+
+| | control | fixed |
+|---|---|---|
+| frames over 16.7 ms | 9, 9, 8 — **26 total** | 4, 4, 7 — **15 total** |
+| `BUILD` per frame | 3.717 ms | **0.631 ms** |
+| `LAYOUT` per frame | 2.882 ms | **1.557 ms** |
+| UI p90 | 9.84 ms | 8.89 ms |
+| raster p90 | 12.30 ms | 14.28 ms |
+| frames rendered | 200, 197, 204 | 218, 205, 203 |
+
+**Dropped frames roughly halve, 26 → 15.** That is the user-visible claim, and
+it is the only measurement here taken on a gesture that actually janks.
+
+Two honest qualifications. Raster p90 moves the *wrong* way, 12.30 → 14.28 ms,
+and the fixed build renders more frames in the same window — the UI thread
+keeping up means more frames reach the rasteriser, so the raster thread gets
+busier. And `BUILD` per frame is 0.631 ms here against 0.045 ms on the gentle
+swipe, because a fast fling pulls far more cards into the viewport and that
+build work is real rather than redundant. The fix removes the waste; it does not
+make a fling free, and fifteen frames are still dropped.
 
 **What did not improve, and I could not make it.** The worst case found is the
 scroll-to-top FAB — `animateTo(0, 400ms)` from the end of a loaded feed, which
