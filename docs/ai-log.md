@@ -373,3 +373,48 @@ forward is narrower than "measure twice" — it is that a baseline is only valid
 for the sitting it was taken in, so any A/B comparison has to include a fresh
 control, and that a change which cannot mechanically act must never be credited
 with an effect no matter how good the numbers look.
+
+### 2026-09-13 · RES-105 (a test written to prove a fix, which proved something else)
+**Suggested:** Narrowing the `Obx` around the FAB lost its scale-in animation. I
+read `_FloatingActionButtonTransition.didUpdateWidget`, found an early return
+when both children are non-null and their keys compare equal
+(`scaffold.dart:1368`), gave the two branches distinct `ValueKey`s, and — because
+I had just told the user that fixing something from source reading alone
+violates our own §4 — wrote `test/home_fab_transition_test.dart` to prove it.
+The test passed, with a second case as a control. I reported the item closed.
+
+**Why it was wrong:** The keys change nothing. `didUpdateWidget` runs when the
+**`Scaffold`** rebuilds; an `Obx` rebuilds itself and never its parent, so that
+method is unreachable from this screen and the keys are never compared. The
+`ScaleTransition` sits at 1.0 from mount, because `Obx` is non-null on the first
+frame. The button had been popping in at full size the whole time.
+
+The test passed because it toggled the branch with `pumpWidget`, which rebuilds
+the `Scaffold` and therefore *does* reach `didUpdateWidget`. It asserted a true
+property of `Scaffold` that the app never exercises. It even had a control — the
+unkeyed case, reaching full size in one frame — and the control passed too,
+because both cases were measuring the same irrelevant path. A control only
+guards against the failure it is aimed at.
+
+**How it was caught:** A code review, which reproduced the production shape in a
+probe rather than re-reading the diff. I then wrote the same probe myself:
+`Scaffold(floatingActionButton: Obx(...))`, flip the `Rx`, pump — scale reads
+1.0 before, immediately after, and 380 ms later.
+
+**Done instead:** `AnimatedScale` inside the `Obx`, with `IgnorePointer` because
+a zero-scale `Transform` keeps its layout slot and stays tappable. The test now
+mounts the production shape and drives it through the `Rx`. The lesson is not
+"write a test" — I did — it is that a test written from the same mental model as
+the fix inherits its error, and that the shape being pumped has to match the
+shape that ships. The cheapest guard is the one the reviewer used: before
+trusting a passing test, check that it fails against the unfixed code *in the
+real tree*, not in the arrangement the test finds convenient.
+
+The same review found a second defect in the same diff: the image decode hint
+constrained the width whenever the box was not taller than wide, which is a 1:1
+test where the source's 4:3 was meant, so the 64×64 thumbnails in the cart and
+orders screens decoded 192×144 and were upscaled 1.33× — a blur I introduced on
+two screens I had never opened. My comment said "all three call sites"; there
+are five. Fixed and verified on device. The pattern there is plainer: I
+enumerated the call sites from the ones I had been thinking about rather than
+from `grep`.
