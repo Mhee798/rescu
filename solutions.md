@@ -165,13 +165,43 @@ show deal 42 — the ticket's requirement is a fully working page, and an error
 screen is explicitly not an acceptable resolution.
 
 **Edge cases**
-- *Unknown or non-numeric id.* `getDealById` throws `ApiException(404)`; the
-  screen shows a plain message and a Try again button. This is **not** the
-  fallback the ticket forbids — that prohibition is about deal 42, which exists
-  and now renders fully. A link to a deal the catalog genuinely does not have
-  has no working page to land on.
+- *Unknown or non-numeric id.* `getDealById` (`fake_api_service.dart:82-90`)
+  has **no injected flakiness at all** — unlike `reserveDeal` and `checkout`,
+  which fail on `_mutationCounter % 5 == 3`, it does latency and then either
+  returns the deal or throws a deterministic 404 for an id not in the catalog.
+  So the failure state is structurally *unreachable for any deal that exists*:
+  deal 42 renders the real page, always, and the error screen is reachable only
+  for input naming nothing. That is what keeps it on the right side of the line
+  the ticket draws, rather than merely "we handle errors nicely".
+  The honest caveat: the generic `catch` branch means a future non-404 failure,
+  or a `DealModel.fromJson` throw on malformed data, *would* route a valid deal
+  there. That branch is defence in depth, not the ticket's answer, and the Try
+  again button is what stops it being terminal.
 - *Transient failure.* Non-404 failures get a retryable message rather than the
   404 wording, since the deal may well exist.
+- *Back pressed while the deep-link fetch is in flight.* The fetch cannot be
+  cancelled, so it completes on a controller GetX has already disposed
+  (`SmartManagement.full` is the default — `get_interface.dart:10`). Without a
+  guard, `_adopt` would then subscribe a screen the user cancelled to the
+  session-long `CartService`. Measured with temporary lifecycle logging: with a
+  back press ~100ms after the push, `onClose` precedes the response in 6 runs
+  out of 6; with a back press at ~250ms the response wins and the worker is
+  registered legitimately. `_adopt` therefore returns early on `isClosed`.
+  Verified end to end: after aborting a deep link to deal 42, a later add-to-bag
+  re-checks only the deal actually viewed.
+- *`Get.parameters` read after an await.* `source` and `id` are captured in
+  `onInit` rather than read inside `_adopt`, which on the deep-link path now
+  runs after the fetch. `Get.parameters` is global navigation state that the
+  next push replaces, so reading it late could attribute the impression to
+  another route's source.
+- *Try again tapped twice.* `_loadFromRoute` returns early while a fetch is in
+  flight, so a double tap cannot log `deal_details_view` twice. The id parse is
+  synchronous, so the flag is always set before the first await.
+- *No way out of the non-content states.* The back arrow on the loaded screen
+  comes from `SliverAppBar`, which the loading and failure states do not have —
+  the failure state was a screen a user could be parked on with no exit. Both
+  now render a back affordance, shown only when `Navigator.canPop()`, mirroring
+  what `AppBar` does rather than adding a button that does nothing.
 - **Not handled, deliberately:** the `ever` worker is stored in `_cartWorker`
   but never disposed. That is RES-103's cause and fixing it here would fold two
   tickets into one commit. This change moves the registration; it deliberately

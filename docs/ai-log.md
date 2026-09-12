@@ -42,10 +42,40 @@ rather than remembered.
 |---|---|---|---|
 | 2026-09-12 | 16:10 | 16:30 | Orientation, environment verification, baselines, scaffolding |
 | 2026-09-12 | 16:30 | 17:10 | Own repo + remote hygiene; read every controller; RES-107 repro |
+| 2026-09-12 | 17:10 | 17:50 | RES-107 fix, peer review round, lifecycle measurement, follow-up fixes |
 
 ---
 
 ## Entries
+
+### 2026-09-12 · RES-107 (my own reasoning, caught by repeating the measurement)
+**Suggested:** A review pointed out that my RES-107 fix had opened a window
+where the uncancellable deep-link fetch completes after `onClose`, registering
+the cart worker on a disposed controller. I added an `isClosed` guard, rebuilt,
+re-ran the repro with a back press 250ms after the push — and the leak was still
+there. I concluded, and wrote to the user, that the hazard was not real, that
+what I had measured was plain RES-103, that my guard was "not load-bearing", and
+that I would remove it.
+
+**Why it was wrong:** Both behaviours are real; they are different points on the
+same random distribution. `getDealById` sleeps 200-700ms
+(`fake_api_service.dart:84`) and the route's disposal lands ~550ms after the
+push. A back press at 250ms usually lets the response win, so `_adopt` runs on a
+live controller and registering the worker is correct — the leak seen then is
+RES-103's missing disposal. A back press at 100ms puts `onClose` first, which is
+exactly the case the guard exists for. One sample from one end of the
+distribution looked like proof that the other end does not exist.
+
+**How it was caught:** Instrumenting the two lifecycle points instead of
+inferring their order, and running the probe six times instead of once. All six
+runs at 100ms showed `onClose` first and no worker registration at all — the
+guard firing. Then the end-to-end check: after aborting a deep link to deal 42,
+a later add-to-bag re-checks only the deal actually viewed.
+
+**Done instead:** Guard kept, with the measured numbers in the comment rather
+than a vague "just in case". Had I shipped the removal I would have deleted a
+correct fix on the strength of a single sample, and written a confidently wrong
+paragraph into `solutions.md` explaining why the reviewer was mistaken.
 
 ### 2026-09-12 · RES-104 (cross-check catch)
 **Suggested:** My own first pass listed `_page--` in `loadMore`'s catch block as

@@ -32,9 +32,17 @@ class DealDetailsController extends GetxController {
 
   Worker? _cartWorker;
 
+  /// Captured once, while `onInit` is still on the route that opened this
+  /// screen. `Get.parameters` is global navigation state that the next push
+  /// replaces, and on the deep-link path `_adopt` now runs after an await.
+  late final int? _routeDealId;
+  late final String _source;
+
   @override
   void onInit() {
     super.onInit();
+    _routeDealId = int.tryParse(Get.parameters['id'] ?? '');
+    _source = Get.parameters['source'] ?? 'unknown';
     final arguments = Get.arguments;
     if (arguments is DealModel) {
       // Feed and flash-rail entry: the caller already holds the model, so this
@@ -48,17 +56,24 @@ class DealDetailsController extends GetxController {
   }
 
   void _adopt(DealModel deal) {
+    // The deep-link fetch cannot be cancelled, so it can complete after the
+    // user has popped the route and `onClose` has already run. Measured: with a
+    // back press ~100ms in, `onClose` precedes the response every time. Without
+    // this guard a screen the user cancelled subscribes to the session-long
+    // CartService and re-checks that deal on every later add-to-bag.
+    if (isClosed) return;
     _deal.value = deal;
     _quantityLeft.value = deal.quantityLeft;
     analytics.logEvent('deal_details_view', {
       'deal_id': deal.id,
-      'source': Get.parameters['source'] ?? 'unknown',
+      'source': _source,
     });
     _watchCart();
   }
 
   Future<void> _loadFromRoute() async {
-    final id = int.tryParse(Get.parameters['id'] ?? '');
+    if (_isLoading.value) return;
+    final id = _routeDealId;
     if (id == null) {
       _loadError.value = 'This link does not point at a deal.';
       return;

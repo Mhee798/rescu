@@ -22,9 +22,13 @@ class DealDetailsScreen extends GetView<DealDetailsController> {
         }
         final error = controller.loadError;
         if (error != null) {
-          return _LoadFailure(message: error, onRetry: controller.retry);
+          return _WithBackButton(
+            child: _LoadFailure(message: error, onRetry: controller.retry),
+          );
         }
-        return const Center(child: CircularProgressIndicator());
+        return const _WithBackButton(
+          child: Center(child: CircularProgressIndicator()),
+        );
       }),
       bottomSheet: Obx(
         () => controller.deal == null
@@ -42,6 +46,30 @@ class DealDetailsScreen extends GetView<DealDetailsController> {
                 ),
               ),
       ),
+    );
+  }
+}
+
+/// The loaded screen gets its back arrow from `SliverAppBar`. The loading and
+/// failure states have no app bar of their own, so without this the failure
+/// state is a screen the user can be parked on with no way out.
+class _WithBackButton extends StatelessWidget {
+  final Widget child;
+
+  const _WithBackButton({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        child,
+        // Mirrors what AppBar does: a back affordance only when there is
+        // somewhere to go back to, rather than a button that does nothing.
+        if (Navigator.of(context).canPop())
+          const SafeArea(
+            child: Align(alignment: Alignment.topLeft, child: BackButton()),
+          ),
+      ],
     );
   }
 }
