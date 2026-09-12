@@ -94,10 +94,59 @@ Single swipe, 97 frames:
 
 Raster sits at **76 % of the frame budget at p90** and two thirds of frames are
 over half the budget. A longer eight-swipe run pushed one raster frame to
-19.88 ms — over budget, i.e. a dropped frame. So the headroom is thin rather
-than gone: this is a device where the wasted work is visible but not yet
-catastrophic. I did not manage to produce the sustained dropped-frame run the
-ticket describes, and say so rather than overstating it.
+19.88 ms — over budget, i.e. a dropped frame. So under a scripted swipe the
+headroom is thin rather than gone.
+
+#### Flicked by hand, it drops frames
+
+`adb shell input swipe` is a slow, even drag; it does not produce the velocity a
+thumb does. Repeated with a person flicking the device hard for several seconds
+(adb over Wi-Fi, so holding the phone could not disturb the connection — the
+first attempt over USB lost the cable mid-flick and the capture with it). The
+ring buffer retained the last 3.98 s, 231 frames:
+
+| | n | p50 | p90 | p99 | max | >16.7 ms | >33.3 ms |
+|---|---|---|---|---|---|---|---|
+| `Animator::BeginFrame` (UI) | 231 | 6.00 | 9.49 | 23.91 | **28.80** | 4 | 0 |
+| `Rasterizer::DoDraw` (raster) | 229 | 8.04 | 13.59 | 32.23 | **36.99** | 11 | 1 |
+
+**15 frames over budget in four seconds** — against zero for the scripted swipe
+on the same device. The worst raster frame took 36.99 ms, more than two vsync
+periods. This is the ticket's symptom, and it needed both the older device and a
+real flick to appear.
+
+What is inside the frames that dropped:
+
+| frame | dominant child |
+|---|---|
+| UI, 28.80 ms | `BUILD` **24.78 ms** |
+| UI, 23.91 ms | `FINALIZE TREE` 16.52 ms |
+| raster, 36.99 ms | `SurfaceFrame::Encode` 33.52 ms |
+| raster, 32.23 ms | `SurfaceFrame::Encode` 29.26 ms |
+
+The worst UI frame is 86 % widget building — the `Obx` closure reconstructing
+the `Scaffold` and every loaded `DealCard`. `FINALIZE TREE` at 16.52 ms in
+another is the element tree churning behind the same rebuild. The raster frames
+are texture encode and upload, which is where the 1600×1200 decodes land.
+
+Phase totals across the 3.98 s window:
+
+| phase | n | p50 | p90 | max | total |
+|---|---|---|---|---|---|
+| `BUILD` | 507 | 1.45 | 2.54 | 21.96 | **730.3 ms** |
+| `LAYOUT (root)` | 230 | 2.43 | 5.01 | 19.34 | 561.7 ms |
+| `PAINT (root)` | 230 | 1.42 | 1.97 | 4.50 | 325.6 ms |
+| `FINALIZE TREE` | 230 | 0.01 | 0.46 | 16.52 | 43.5 ms |
+| `SurfaceFrame::Encode` | 230 | 5.20 | 8.37 | 33.52 | **1392.2 ms** |
+
+`BUILD` consumes **18.3 %** of wall-clock time during the flick. Not all of that
+is waste — some rebuilding is real — but on this screen the `Obx` scope means
+every one of those builds reconstructs the entire feed subtree.
+
+Caveat on reading these: `BUILD` appears 507 times against 230 frames, so the
+spans nest and the per-event percentiles are not per-frame figures. The totals
+and the per-frame breakdowns above are the trustworthy parts. The flick duration
+was also not controlled — the window is whatever the ring buffer still held.
 
 ### PTP N49 — no jank at all
 
