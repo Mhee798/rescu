@@ -66,11 +66,22 @@ class TheNetworkImage extends StatelessWidget {
   /// box taller than it is wide, cover would be bound by height instead and a
   /// width hint would make it decode too small and blur, so the hint is
   /// withheld rather than guessed.
+  ///
+  /// Both dimensions are read from this widget's own fields first and from the
+  /// incoming constraints only as a fallback. The constraints alone are not
+  /// enough: the feed card and the flash rail both sit in a `Column`, so the
+  /// height reaching the `LayoutBuilder` is infinite and their real height
+  /// exists only as `this.height`. Testing the constraints alone made the
+  /// tall-box guard unreachable at two of the three call sites — they came out
+  /// right because the guard never ran, not because it agreed.
   int? _decodeWidth(BuildContext context, BoxConstraints constraints) {
-    final slotWidth = constraints.maxWidth;
+    final slotWidth = _finite(width) ?? constraints.maxWidth;
     if (!slotWidth.isFinite || slotWidth <= 0) return null;
-    final slotHeight = constraints.maxHeight;
+    final slotHeight = _finite(height) ?? constraints.maxHeight;
     if (slotHeight.isFinite && slotHeight > slotWidth) return null;
     return (slotWidth * MediaQuery.devicePixelRatioOf(context)).ceil();
   }
+
+  static double? _finite(double? value) =>
+      (value != null && value.isFinite) ? value : null;
 }
