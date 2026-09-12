@@ -1,13 +1,21 @@
 # RES-105 · baseline measurements
 
-Device: PTP N49 (SM8750), 1280×2800 @ density 560 (DPR 3.5), display supports
-60/90/120 Hz. Build: `fvm flutter run --profile`, 2026-09-12 22:29–22:36.
+Measured on **two** devices, because the first one was too fast to show the
+symptom the ticket describes:
 
-This is a **high-end** device. The ticket describes the symptoms on *mid-range*
-Android. Both halves of what follows matter: the structural counts reproduce the
-ticket's description exactly, and the frame times say this particular phone
-absorbs the cost. The numbers are recorded rather than summarised so the
-after-figures can be compared against the same procedure.
+| | PTP N49 | ELE-L29 |
+|---|---|---|
+| SoC | Snapdragon 8 Elite (SM8750), 2024 | Kirin 980, 2018 |
+| OS | Android 16 (API 36) | Android 10 (API 29) |
+| Screen | 1280×2800, density 560 (DPR 3.5) | 1080×2340, density 480 (DPR 3.0) |
+| Refresh | 60/90/120 Hz | 60 Hz |
+| RAM | 16 GB | 8 GB |
+
+Build: `fvm flutter run --profile`, 2026-09-12 22:29–23:10. The ELE-L29 is the
+"mid-range Android" the ticket is written about; the PTP N49 is not. Both sets
+of numbers are kept, because the difference between them is itself the finding:
+the *structural* defects are identical on both, and only the second device turns
+them into a frame-time cost.
 
 ## Widget rebuilds during one scroll
 
@@ -54,17 +62,53 @@ keep off-screen card elements alive — 93 builds across 23 parent rebuilds is
 roughly the viewport plus cache extent. The cost here is allocation churn, not
 retention.
 
-## Frame times — no jank on this device
+## What one rebuild actually costs — the number the fix moves
 
-From the same timeline (microseconds → ms):
+Duration of the `Obx` build event, i.e. the closure that rebuilds the whole
+`Scaffold` including the spread over every loaded deal. Same single-swipe
+window on each device:
+
+| | n | p50 | p90 | max | total in the swipe |
+|---|---|---|---|---|---|
+| `Obx` — ELE-L29 | 14 | **3.38 ms** | 3.65 ms | 4.19 ms | 47.3 ms |
+| `Obx` — PTP N49 | 23 | 1.37 ms | 1.94 ms | 2.03 ms | 34.0 ms |
+| `DealCard` — ELE-L29 | 75 | 0.89 ms | 1.04 ms | 1.37 ms | 67.5 ms |
+| `DealCard` — PTP N49 | 93 | 0.38 ms | 0.48 ms | 0.57 ms | 36.2 ms |
+
+On the 2018 device **every scroll frame that rebuilds spends 3.38 ms of a
+16.7 ms budget** reconstructing a tree that differs from the previous one only
+in an `AppBar` elevation flag and whether a FAB is present. That is the cost
+the `Obx` scope change removes, and it is a directly comparable before/after
+figure rather than an inference.
+
+## Frame times — the ticket's symptom needs the older device
+
+### ELE-L29 (Kirin 980, 60 Hz, budget 16.7 ms)
+
+Single swipe, 97 frames:
+
+| | n | p50 | p90 | p99 | max | >8.3 ms | >16.7 ms |
+|---|---|---|---|---|---|---|---|
+| `Animator::BeginFrame` (UI) | 97 | 2.20 | 9.51 | 11.49 | 11.49 | 14 | 0 |
+| `Rasterizer::DoDraw` (raster) | 97 | 9.96 | 12.76 | 15.68 | 15.68 | 65 | 0 |
+
+Raster sits at **76 % of the frame budget at p90** and two thirds of frames are
+over half the budget. A longer eight-swipe run pushed one raster frame to
+19.88 ms — over budget, i.e. a dropped frame. So the headroom is thin rather
+than gone: this is a device where the wasted work is visible but not yet
+catastrophic. I did not manage to produce the sustained dropped-frame run the
+ticket describes, and say so rather than overstating it.
+
+### PTP N49 — no jank at all
 
 | | n | p50 | p90 | p99 | max | >8.3 ms | >16.7 ms |
 |---|---|---|---|---|---|---|---|
 | `Animator::BeginFrame` (UI) | 83 | 0.60 | 4.03 | 6.00 | 6.00 | 0 | 0 |
 | `Rasterizer::DoDraw` (raster) | 83 | 1.63 | 2.27 | 2.59 | 2.59 | 0 | 0 |
 
-Zero frames over even the 120 Hz budget. **The jank half of RES-105 does not
-reproduce on this hardware.**
+Zero frames over even the 120 Hz budget; raster p90 is **5.6× faster** than the
+ELE-L29's. The jank half of RES-105 does not reproduce on this hardware at all,
+which is why the second device was brought in.
 
 ## Memory — grows, but nothing like "until the OS kills the app"
 
@@ -79,9 +123,29 @@ deals were scrolled past.
 | after 40 swipes | 201,561 kB | 48,976 | 69,480 |
 | after 60 swipes | 211,307 kB | 57,888 | 70,048 |
 
-+5.4 MB PSS across ~100 deals, and it dips before it climbs. Not the runaway the
-ticket describes — on 16 GB of RAM with a 100 MB image cache that is already
-full at the first screen.
++5.4 MB PSS across ~100 deals, and it dips before it climbs.
+
+ELE-L29, same procedure, and this run reached `GET /deals?page=7` — **all 122
+deals**. This device reports image memory under Native Heap rather than
+Graphics (`GL mtrack` stays at 684 kB throughout):
+
+| point | Native Heap |
+|---|---|
+| Home loaded, no scroll | 27,580 kB |
+| after 20 swipes | 32,664 kB |
+| after 40 swipes | 38,248 kB |
+| after 60 swipes | 37,332 kB |
+
++10 MB, then it **plateaus and dips** — the third reading is lower than the
+second. Total PSS at the end: 93,872 kB.
+
+**The "memory keeps climbing until the OS kills the app" symptom does not
+reproduce on either device**, including the one that does show the frame cost.
+That is what an `ImageCache` doing its job looks like: it is not leaking, it is
+saturated at its 100 MB ceiling and evicting. The cost lands on decode work —
+frame time — not on retention. Stated plainly because it contradicts the
+ticket's wording, and the write-up should not claim a memory improvement it
+cannot measure.
 
 ## Image sizing — measured, and worse than my own arithmetic said
 
