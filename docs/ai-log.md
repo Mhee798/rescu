@@ -334,3 +334,42 @@ measured, because it will otherwise be read at the same weight as its
 neighbours. The tell was available before the review — I had two numbers about
 the same thing that disagreed by a factor of two and did not put them side by
 side.
+
+### 2026-09-13 · RES-105 (the fifth time, and the first time I caught it myself)
+**Suggested:** Having written that the frames still dropping after the fix might
+be image decode on the raster thread, I built a prefetching variant —
+`precacheImage` four cards ahead — and measured 0, 1, 1 dropped frames against
+the fixed build's 4, 4, 7. UI p90 6.11 against 8.89, raster p90 10.39 against
+14.28. Every number moved the right way, the cache-key check passed exactly
+(peak cache identical to the byte, so nothing was being decoded twice), and the
+mechanism was one I had predicted in writing beforehand. It was ready to report.
+
+**Why it was wrong:** The comparison was against a fixed-build measurement taken
+an hour earlier. Re-running the *unmodified* fixed build immediately after the
+experiment gave 2, 0, 6 and `BUILD` per frame of 0.428 ms against the earlier
+sitting's 0.631 ms. The prefetch build's 0.424 ms is the same number. There was
+no effect; there was drift between sittings, and the experiment had been
+compared against a stale baseline.
+
+**How it was caught:** By noticing a flaw in my own experiment before reading
+the result as a win — the `_requested` set meant prefetching could only fire for
+images never seen before, and the measurement runs came after sixty swipes
+through the whole feed, so during the measured flings the prefetch code was
+doing nothing but set lookups. A change that cannot act should not produce a 7×
+improvement. That is what prompted the re-run rather than the write-up.
+
+**Done instead:** Neither candidate adopted. The `RepaintBoundary` half was
+settled by reading `scroll_delegate.dart:505` — the framework already adds one
+per child — and the prefetch half is recorded as a failed experiment rather than
+omitted. The headline for the ticket was loosened at the same time, from "26 →
+15" to "a median of 9 dropped frames per run against 4", because the same
+re-run showed the fixed side varies by 50 % between sittings while the control's
+three runs agree to 5 %.
+
+This is the fifth entry in this log with one shape: a result that agreed with
+what I expected, produced by a measurement that had not been repeated. The
+earlier four were caught by a reviewer or by the user. The rule I am taking
+forward is narrower than "measure twice" — it is that a baseline is only valid
+for the sitting it was taken in, so any A/B comparison has to include a fresh
+control, and that a change which cannot mechanically act must never be credited
+with an effect no matter how good the numbers look.
