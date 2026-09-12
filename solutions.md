@@ -362,6 +362,16 @@ cache extent. The cost is allocation churn and the layout work that follows, not
 retention — the worst UI frame of the scroll-to-top case spent 35.11 ms in
 `LAYOUT`.
 
+One cost of this scope change had to be paid back. `Obx` cannot return null, so
+`Scaffold` stopped seeing the null-to-widget change it animates the FAB on:
+`_FloatingActionButtonTransition.didUpdateWidget` returns early when both
+children are non-null and their keys compare equal (`scaffold.dart:1368`), which
+two unkeyed widgets do, and the button began appearing at full size instead of
+scaling in. Distinct `ValueKey`s on the two branches restore it, and
+`test/home_fab_transition_test.dart` pins it — the keyed case takes more than
+one frame to reach full scale, the unkeyed case reaches it in one. The second
+case is there so the first cannot quietly become vacuous.
+
 *Fix.* `ListView.builder`, with the two headers kept in place by an index offset
 rather than a second widget list. The horizontal flash rail was already a
 `ListView.builder` (`flash_deals_section.dart:36`) and needed no change — this
