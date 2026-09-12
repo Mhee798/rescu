@@ -287,16 +287,180 @@ under Edge cases above.
 **Evidence** —
 
 ## RES-105 · Home feed is janky and memory keeps climbing
-**Status** not started
+**Status** three causes found and fixed, verified against a negative control on
+a 2018 device. One of the two symptoms in the ticket does not reproduce, and the
+worst case I found did not improve — both stated below rather than omitted.
 
-**Symptom** Dropped frames while scrolling; memory grows until the OS kills the app. The ticket states there is more than one contributing cause.
+**Symptom** Dropped frames while scrolling; memory grows until the OS kills the
+app. The ticket states there is more than one contributing cause.
 
-**Root cause** — *(expected to be a list, one entry per cause, each with its own attributed improvement)*
-**Fix** —
-**Alternative rejected** —
-**Edge cases** —
-**Evidence** — *(profile mode only; device, scenario, before/after)*
+**Where the symptoms actually appear.** The first device used, an Honor Magic 7
+Pro (Snapdragon 8 Elite, 120 Hz), shows zero frames over budget with the bug
+present — it absorbs the whole defect. Everything below was therefore measured
+on a Huawei P30 Pro (Kirin 980, 2018, 60 Hz, Android 10), which is the
+"mid-range Android" the ticket is written about. Full baselines for both, and
+the procedure, are in `docs/res-105/baseline.md`.
 
+**The memory half of the ticket does not reproduce.** On both devices memory
+plateaus: on the P30 Pro, Native Heap goes 27.6 MB → 38.2 MB across all 122
+deals and then *falls* to 37.3 MB. That is an `ImageCache` doing its job — it is
+not leaking, it is saturated at its 100 MB ceiling and evicting. The cost of
+oversized images lands on decode and upload work, which is frame time, not on
+retention. No memory improvement is claimed here for that reason.
+
+### Cause 1 — one `Obx` around the whole `Scaffold`, reading a value written every frame
+
+`HomeScreen.build` wrapped the entire `Scaffold` in a single `Obx` whose first
+statement was `controller.scrollOffset.value`, and `HomeController._onScroll`
+assigned that offset on every scroll callback. So every scroll frame invalidated
+the whole feed subtree. Measured with `ext.flutter.profileWidgetBuilds`: **23
+`Scaffold` rebuilds across 23 rendered frames** — one per frame, not
+"frequently".
+
+Everything inside that scope was identical between frames except two things,
+both threshold comparisons on the offset: `elevation: offset > 4 ? 2 : 0` and
+`offset > 800` deciding whether the FAB exists.
+
+*Fix.* The controller exposes the two thresholds as `RxBool` and no longer
+publishes the raw offset. `Rx.value` skips notifying when the value is unchanged
+(`rx_impl.dart:101`), so each flag wakes its own `Obx` twice per journey down
+the feed instead of once per frame. The screen has three narrow scopes — AppBar,
+body, FAB. The AppBar's sits inside a `PreferredSize` because `Scaffold.appBar`
+requires a `PreferredSizeWidget` and `Obx` is not one.
+
+### Cause 2 — the feed built every card on every rebuild
+
+`ListView(children: [..., ...visibleDeals.map((d) => DealCard(deal: d)), ...])`.
+The spread constructs one `DealCard` **object** per loaded deal each time the
+enclosing scope runs, and `SliverChildListDelegate` holds the whole list.
+Measured over one swipe: **385 `DealCard` objects constructed, 93 actually
+built** — three quarters allocated and discarded without reaching `build()`,
+alongside 24,509 `_List` allocations (1.27 MB) in 400 ms.
+
+Worth stating what this is *not*: `ListView(children:)` does not keep off-screen
+card elements alive. 93 builds across 23 parent rebuilds is the viewport plus
+cache extent. The cost is allocation churn and the layout work that follows, not
+retention — the worst UI frame of the scroll-to-top case spent 35.11 ms in
+`LAYOUT`.
+
+*Fix.* `ListView.builder`, with the two headers kept in place by an index offset
+rather than a second widget list.
+
+### Cause 3 — every image decoded at 1600×1200 whatever slot it lands in
+
+`fake_api_service.dart:267` serves `picsum.photos/seed/<seed>/1600/1200` for
+every deal, and `TheNetworkImage` constrained nothing. Flutter reports the cost
+itself once `debugInvertOversizedImages` is on:
+
+```
+Image null has a display size of 1168×560 but a decode size of 1600×1200,
+which uses an additional 6593KB (assuming a device pixel ratio of 3.5).
+```
+
+By the framework's own accounting (`painting/debug.dart:93` — `w × h × 4 × 4/3`,
+four bytes per pixel plus a third for mipmaps) that is 10,000 KB held per image
+against 3,406 KB needed. `ImageCache` defaults to 100 MB, so it holds **ten** of
+them; a 122-deal feed evicts and re-decodes continuously. The consequence shows
+in the raster thread: the worst frame of the scroll-to-top case spent **73.16 ms
+in `UploadTextureToPrivate`**, the GPU upload of decoded bitmaps.
+
+*Fix.* `memCacheWidth` from a `LayoutBuilder`, since the call sites pass
+`width: double.infinity` and the real slot width is only known after layout.
+Width only: `ResizeImage` preserves the aspect ratio from one dimension and
+constraining both would stretch the image.
+
+**Fix** Three separate commits, one per cause: `b367cde`, `1792087`, `2a87716`.
+
+**Alternative rejected** *Wrap only the `AppBar`'s elevation and the FAB in
+`Obx` but leave `scrollOffset` as a `double`.* Fewer moving parts and no new
+controller fields. Rejected because the `Obx` would still be woken on every
+scroll frame — the notification comes from the `Rx` changing, and the offset
+changes continuously. It would rebuild an `AppBar` 60 times a second to produce
+the same elevation 59 of those times. Moving the threshold into the `Rx` is what
+makes the notification rare, not moving the `Obx`.
+
+Also rejected: *raising `ImageCache.maximumSizeBytes` so the feed's images fit.*
+It would cut the re-decoding, and on a 12 GB phone it would even look fine.
+Rejected because it spends memory to avoid fixing the thing that wastes memory,
+and it makes the app's footprint worse on exactly the devices the ticket is
+about. The cache is not too small; the images are too large.
+
+**Edge cases**
+- *A slot taller than it is wide.* `BoxFit.cover` would then be bound by height,
+  and a width-only hint would decode too small and blur. `_decodeWidth` returns
+  null in that case rather than guessing. None of the three current call sites
+  hit it.
+- *Unbounded width.* Returns null; the flash rail and feed card both receive a
+  finite width from their parents, the details header from the flexible space.
+- **Not fixed, deliberately:** `visibleDeals` still builds a new `List` on every
+  read. With the `Obx` scoped, it is read when `deals` or `todayOnly` changes
+  rather than once per frame, which was the part that mattered. Memoising it
+  would add cache-invalidation state to a controller for a cost that is no
+  longer on the hot path.
+
+**Evidence** — profile mode, Huawei P30 Pro over Wi-Fi adb, 2026-09-12/13. The
+fixed and control builds were measured alternately, the control produced by
+checking the three files out at the pre-fix commit and rebuilding, so the
+comparison is against the same device in the same session rather than against
+figures from earlier in the day. Control build confirmed to be the old code by
+its widget-build signature (`PreferredSize` absent, `Scaffold` rebuilding).
+
+*Rebuild counts, one scripted swipe, `profileWidgetBuilds` on:*
+
+| | control | fixed |
+|---|---|---|
+| frames in the window | 79 | 86 |
+| `Scaffold` builds | 14 | **0** |
+| `Obx` builds | 14 | 2 |
+| `AppBar` builds | 14 | 2 |
+| `DealCard` builds | 50 | 1 |
+
+*Frame cost, three scripted swipes per side, tracking off so the measurement is
+free-running (medians):*
+
+| | control | fixed |
+|---|---|---|
+| `BUILD` per frame | 2.087 ms | **0.045 ms** |
+| `LAYOUT` per frame | 1.359 ms | **0.240 ms** |
+| UI p90 | 5.57 ms | **2.06 ms** |
+| raster p50 | 8.61 ms | 9.36 ms |
+
+*Image decode, debug build with `debugInvertOversizedImages`, P30 Pro at DPR 3.0:*
+
+| | control | fixed |
+|---|---|---|
+| decode size | 1600 × 1200 | **984 × 738** |
+| held per image | 10,000 KB | **3,781 KB** |
+| overhead Flutter reports | 7,540 KB | **1,322 KB** |
+| images the 100 MB cache holds | ~10 | ~26 |
+
+The warning does not disappear — 36 lines still appear over fourteen swipes,
+now reading `display size of 984×480 but a decode size of 984×738`. That
+residual is the aspect overhang: the source is 4:3, the card slot is 2.05:1, and
+`BoxFit.cover` crops the extra rows. A width-only hint cannot remove it, and
+`cached_network_image` does not expose `ResizeImage`'s fit policy. 82 % of the
+waste is gone; the rest is left, named.
+
+Peak Native Heap across all 122 deals: 38,248 kB → 34,963 kB.
+
+**What did not improve, and I could not make it.** The worst case found is the
+scroll-to-top FAB — `animateTo(0, 400ms)` from the end of a loaded feed, which
+drives the viewport through every card in the list. Four runs per side:
+
+| | control | fixed |
+|---|---|---|
+| frames over 16.7 ms | 14, 16, 15, 9 (median 14.5) | 9, 12, 13, 11 (median 11.5) |
+| raster max | 51.1, 30.0, 30.5, 22.2 | 18.6, 60.8, 18.0, 87.1 |
+
+The distributions overlap and the variance swamps the difference; the largest
+single raster frame of the whole exercise, 99.5 ms, came from a *fixed* run.
+**No improvement is claimed for this case.** The reason it resists the fix is
+that the work is real: the animation genuinely puts a hundred new cards through
+build, layout and image upload in four tenths of a second, and none of the three
+causes was what made that expensive. Removing it properly means not animating
+through the whole list — `jumpTo` with a short fade, or Flutter's own
+`ScrollController.animateTo` replaced by a jump past the cache extent — which is
+a behaviour change to a working feature and outside this ticket.
 ## RES-106 · Wrong pickup times; "Pickup today" filter misses deals
 **Status** fixed — reproduced by test and on device, fixed, re-verified
 
