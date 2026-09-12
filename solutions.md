@@ -288,8 +288,8 @@ under Edge cases above.
 
 ## RES-105 · Home feed is janky and memory keeps climbing
 **Status** three causes found and fixed, verified against a negative control on
-a 2018 device: on the gesture that actually janks, dropped frames halve, 26 → 15
-across three runs. One of the two symptoms in the ticket does not reproduce at
+a 2018 device: on the gesture that actually janks, dropped frames halve, a
+median of 9 per run to 4. One of the two symptoms in the ticket does not reproduce at
 all, and the worst case I found did not improve — both stated below rather than
 omitted.
 
@@ -534,17 +534,28 @@ person flicking the device, which is not reproducible. A fast scripted fling
 script) reproduces it and is repeatable. Three runs per build, all 122 deals
 loaded, P30 Pro:
 
-| | control | fixed |
+| | control (1 sitting) | fixed (2 sittings) |
 |---|---|---|
-| frames over 16.7 ms | 9, 9, 8 — **26 total** | 4, 4, 7 — **15 total** |
-| `BUILD` per frame | 3.717 ms | **0.631 ms** |
-| `LAYOUT` per frame | 2.882 ms | **1.557 ms** |
-| UI p90 | 9.84 ms | 8.89 ms |
-| raster p90 | 12.30 ms | 14.28 ms |
-| frames rendered | 200, 197, 204 | 218, 205, 203 |
+| frames over 16.7 ms, per run | 9, 9, 8 | 4, 4, 7 · 2, 0, 6 |
+| median per run | **9** | **4** |
+| `BUILD` per frame | 3.717 ms | 0.631 · **0.428** ms |
+| UI p90 | 9.84 ms | 8.89 · **6.25** ms |
+| raster p90 | 12.30 ms | 14.28 · 11.25 ms |
 
-**Dropped frames roughly halve, 26 → 15.** That is the user-visible claim, and
-it is the only measurement here taken on a gesture that actually janks.
+**Dropped frames roughly halve — 9 per run to 4.** That is the user-visible
+claim, and it is the only measurement here taken on a gesture that actually
+janks.
+
+The fixed side is given as two separate sittings on purpose. The first
+(4, 4, 7) was taken immediately after the control; the second (2, 0, 6) came
+an hour later while checking something else, and its `BUILD` per frame,
+0.428 ms, disagrees with the first sitting's 0.631 ms by 50 %. The control's
+three runs agree with each other to within 5 %, so the instability is on the
+fixed side and between sittings rather than within them — most likely thermal
+state or how much of the disk image cache was warm. The conclusion survives
+because the worst fixed run, 7, is still below the best control run, 8, but
+the honest resolution of this measurement is "roughly halves", not a
+two-significant-figure ratio.
 
 Two honest qualifications. Raster p90 moves the *wrong* way, 12.30 → 14.28 ms,
 and the fixed build renders more frames in the same window — the UI thread
@@ -554,16 +565,32 @@ swipe, because a fast fling pulls far more cards into the viewport and that
 build work is real rather than redundant. The fix removes the waste; it does not
 make a fling free, and fifteen frames are still dropped.
 
-*What is left, as a hypothesis rather than a finding.* Of the two threads,
-raster is now the worse one — p90 14.28 ms against the UI thread's 8.89 ms — and
-the biggest single item inside the slowest raster frames measured anywhere in
-this exercise was `UploadTextureToPrivate`. The images are three times smaller
-than they were but they are still decoded and uploaded during the scroll, one
-per card crossing the viewport. The next thing I would try is prefetching with
-`precacheImage` ahead of the viewport so the decode is not on the critical path,
-and `RepaintBoundary` on `DealCard` so a card that has not changed is not
-re-rastered when its neighbours move. Neither is measured, and neither belongs
-in this ticket's diff.
+*What is left.* Two candidates were considered for the frames that still drop,
+and both were checked rather than left as speculation.
+
+*`RepaintBoundary` on `DealCard`* — already there.
+`SliverChildBuilderDelegate.build` wraps every child in one when
+`addRepaintBoundaries` is true, which is the default
+(`widgets/scroll_delegate.dart:505`). Adding another would be a no-op. Settled
+by reading the framework, not by measuring.
+
+*Prefetching images ahead of the viewport with `precacheImage`* — built and
+measured, **and it does not hold up**. A variant that precaches four cards ahead
+using `ResizeImage.resizeIfNeeded(w, null, CachedNetworkImageProvider(url))`,
+the same key `cached_network_image` builds internally (verified: peak cache
+stayed at exactly 36 images / 104,571,648 bytes, so nothing was decoded twice),
+dropped 0, 1, 1 frames against the fixed build's 4, 4, 7 — an apparently large
+win. Re-running the *unmodified* fixed build in the same conditions immediately
+afterwards gave 2, 0, 6. The difference was session drift, not prefetching.
+Recorded because it is the more interesting result: the experiment was sound,
+the cache-key check passed, and the number was still meaningless without a
+same-sitting control.
+
+So the honest position is that I do not know what the remaining frames are. The
+raster thread is the busier of the two after the fix, and
+`UploadTextureToPrivate` is the largest item in the slowest raster frames
+measured, which points at decode and upload — but that is where the evidence
+stops.
 
 **What did not improve, and I could not make it.** The worst case found is the
 scroll-to-top FAB — `animateTo(0, 400ms)` from the end of a loaded feed, which
