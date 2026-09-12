@@ -93,17 +93,99 @@ contaminate the comparison.
 **Evidence** — *(profile mode only; device, scenario, before/after)*
 
 ## RES-106 · Wrong pickup times; "Pickup today" filter misses deals
-**Status** not started
+**Status** fixed — reproduced by test and on device, fixed, re-verified
 
 **Symptom** A bakery open 06:00–09:30 renders "Pick up 23:00 – 02:30"; stores with slots today are missed by the **Pickup today** filter.
 
-**Root cause** — not established. `lib/model/pickup_window_model.dart` was read
-during orientation and is the obvious first place to look, but nothing has been
-reproduced or confirmed yet, so no cause is claimed here.
-**Fix** —
-**Alternative rejected** —
-**Edge cases** —
-**Evidence** —
+**Root cause** The backend team is right: the API is correct.
+`_pickupWindowFor` builds each window on the market wall clock
+(`_marketUtcOffsetHours = 7`) and serialises the resulting **instants** as
+ISO-8601 `Z` strings. The client then treats those instants as if they were
+already wall-clock times. Two distinct consequences from one mistake, both in
+`lib/model/pickup_window_model.dart`:
+
+- **`label`** — `DateTime.parse` of a `Z` string returns a `DateTime` with
+  `isUtc == true`, and `DateFormat.format` reads that object's `.hour`/`.minute`
+  fields rather than converting zones. So the screen printed the UTC clock. 06:00
+  market time is 23:00Z the previous day, which is exactly the string in the
+  ticket.
+- **`isToday`** — `start.day == DateTime.now().day` compared a **UTC** day
+  number against a **local** one, and compared only `.day`, ignoring month and
+  year. Both halves are wrong independently: the zone mismatch drops windows
+  that straddle midnight UTC (precisely the morning windows users complained
+  about), and the missing month/year means the same date one month apart counts
+  as "today".
+
+**Fix** `.toLocal()` before formatting, and a full year/month/day comparison for
+the day check. The day check moved into `isTodayAt(DateTime now)` with `isToday`
+delegating to it, because the model called `DateTime.now()` internally and so
+could not be covered by a test at all — see Q3.
+
+`label` and `isToday` both use the local zone now, **but for different reasons,
+and they would diverge under a better API.** `label` answers "what time does
+this store open?", a property of the store, ideally rendered in the store's own
+zone. `isToday` answers "can I collect this today?", a property of the *user's*
+calendar day, which stays device-local under any design. Treating them as one
+fix would be the naive reading.
+
+**Alternative rejected** *Hardcode `+7` in the client to match
+`_marketUtcOffsetHours`.* It reproduces the backend's own conversion and is right
+for the 27 Bangkok stores. Rejected because it copies a backend business constant
+the API never sends — the contract is instants, and the only zone a client
+legitimately owns is the device's. It is wrong for the 3 Hong Kong stores today
+and silently wrong for any market added later, and it fails in the same "user
+travelled" case that `.toLocal()` is accused of failing, while also failing when
+they have not.
+
+**Edge cases**
+- *Not fixable from the client, and logged rather than worked around:* the
+  catalog is **not single-market**. 27 of 30 stores are THB/Bangkok; stores 28,
+  29 and 30 are HKD with Hong Kong addresses (Hennessy Road, lat ~22.3 / lng
+  ~114.16). No store carries a timezone field, and `_pickupWindowFor` applies the
+  `+7` market offset to those three as well, so their windows are constructed on
+  the wrong market's wall clock before they ever reach the app. **No client-side
+  choice renders them correctly** — the fix for those is a per-store zone in the
+  API and a market offset that is not global, both of which live in
+  `fake_api_service.dart`, which is out of bounds. `.toLocal()` is correct for the
+  ticket's complaint and for 27 of 30 stores; for the other 3 it is wrong, and so
+  is every alternative.
+- *Deliberately not touched, having checked them:* `isOpenNow` and `untilStart`
+  compare and subtract `DateTime`s, which operate on instants regardless of the
+  UTC flag, so they were already correct. The same applies to
+  `OrderModel.pickupStart/pickupEnd`, whose only consumer is `PickupCountdown`
+  (`orders_screen.dart:95`) doing `.difference(DateTime.now())`. Patching those
+  for symmetry would have been churn.
+- *Overnight windows* (e.g. 22:00–01:00) still render end-before-start as a
+  label, which is the existing intended display and unchanged here.
+
+**Evidence** The bug was pinned by a throwaway characterisation test written
+**against the unfixed code**, so the fix could be shown to change behaviour
+rather than merely to compile.
+
+Against the original model, both of these passed:
+```dart
+expect(w.label, '23:00 – 02:30');                     // the ticket's string
+expect(w.isToday, DateTime.now().day == 12);          // .day only
+```
+Against the fixed model, both fail:
+```
+Expected: '23:00 – 02:30'
+  Actual: '06:00 – 09:30'      // the bakery's real opening hours
+Expected: <true>
+  Actual: <false>
+```
+The throwaway was then deleted and replaced by `test/pickup_window_test.dart`
+(8 cases, including the month-apart and year-apart cases the old `.day`
+comparison got wrong). `fvm flutter test` 9/9.
+
+On device (PTP N49, local +07), the same card moved from
+`Pick up 22:30 – 01:00` to `Pick up 05:30 – 08:00` — a clean +7h shift.
+With **Pickup today** on, deals now appear (e.g. *Surprise Sushi Box*,
+22:00 – 01:00, genuinely later tonight). *Mystery Thai Feast* correctly drops
+out of the filtered list: its 05:30–08:00 window has already passed today, so the
+backend rolls it to tomorrow and it is not a today pickup.
+Screenshots: `docs/res-106/01-home-before.png`, `02-home-after.png`,
+`03-pickup-today-filter-after.png`.
 
 ## RES-107 · Deep link opens to a crash
 **Status** fixed — reproduced, fixed, re-verified on device
@@ -345,7 +427,30 @@ ordering decisions.)*
 —
 
 **Q3 — An automated test that would have caught RES-106, and what would have to change to make it possible.**
-—
+
+The test is a unit test on `PickupWindowModel`, and the assertion is not "the
+label is 06:00". It is: *a window the backend built from 06:00 market time
+renders as 06:00 for a user in that market, and counts as today for them* —
+exercised at a UTC offset where local and UTC disagree, because at offset zero
+the bug is invisible. `test/pickup_window_test.dart` now does exactly this,
+plus the `.day`-only cases (same date one month and one year apart) that the old
+comparison got wrong.
+
+What had to change to make it possible: the model called `DateTime.now()`
+directly inside `isToday`, so its result depended on the wall clock at the moment
+the test ran and could not be asserted. Splitting out `isTodayAt(DateTime now)`,
+with `isToday` delegating, makes the comparison a pure function of its inputs.
+That is the minimum; `isOpenNow` and `untilStart` still call `DateTime.now()`
+internally and remain untestable for the same reason — they were correct, so I
+left them, but the same seam would be the fix.
+
+What is still not covered: `label` depends on the *process* timezone, which Dart
+reads at start-up and a test cannot change from inside. Covering the zone
+conversion honestly means running the suite under at least two offsets (e.g.
+`TZ=UTC` and `TZ=Asia/Bangkok`) in CI. The current test derives its expectation
+from the instant, so it passes at any offset and would have failed on the old
+code at any non-zero one — but at `TZ=UTC` it is vacuous, which the test says
+out loud rather than hiding.
 
 ---
 
