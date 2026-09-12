@@ -16,8 +16,20 @@ How it was caught: …
 Done instead: …
 ```
 
-**Tool in use:** Claude Code (Opus 5) in the terminal, with access to the repo
-and to the live app on the test device.
+**Tools in use:**
+- Claude Code (Opus 5) in the terminal, with access to the repo and to the live
+  app on the test device. Does all editing, reproduction and writing.
+- A second Claude Code session (`rescu-a4`) was run read-only over the same
+  checkout on 2026-09-12 as an independent cross-check. It produced a code-read
+  triage of RES-101..106 and wrote nothing to the repo (verified: clean `git
+  status`, no branches, no worktrees). It was offered the chance to implement
+  RES-101/102/106 on a branch and that was declined, for two reasons: the real
+  bottleneck is one physical test device that RES-102, RES-105 and RES-106 all
+  need serially (RES-106 requires changing the device timezone, which would
+  corrupt any concurrent measurement), and PROBLEM.md states the diff is
+  questioned line by line in the follow-up interview, so every line should come
+  from a session that was actually watched. Its one novel finding is credited
+  under RES-104 below.
 
 ---
 
@@ -34,6 +46,28 @@ rather than remembered.
 ---
 
 ## Entries
+
+### 2026-09-12 · RES-104 (cross-check catch)
+**Suggested:** My own first pass listed `_page--` in `loadMore`'s catch block as
+part of the duplicate-cards sequence — but wrote it into a sequence that
+contains no error at all, so the clause was incoherent where it sat. On review I
+deleted it rather than relocating it.
+
+**Why it was wrong:** Deleting lost a real second defect. `_page--`
+(`home_controller.dart:80`) runs on whatever `_page` holds *after* a concurrent
+`refreshDeals` has reset it to 1, so a failed in-flight `loadMore` leaves
+`_page = 0`; the next `loadMore` increments to 1 and refetches page 1 on top of
+the refreshed list. That is a distinct duplication path from the
+refresh-lands-first ordering, not the same one told badly.
+
+**How it was caught:** A second session reading the same file independently
+split it out as its own sub-case instead of folding it into the first. Verified
+against the source before accepting it.
+
+**Done instead:** Both paths recorded separately in the working checklist, to be
+confirmed by reproduction before either goes into this file's RES-104 section.
+Lesson kept: when a detail does not fit the story being told, the first move is
+to check whether the story is too narrow, not to drop the detail.
 
 ### 2026-09-12 · RES-107
 **Suggested:** Before reproducing, the assistant predicted the two deep-link
