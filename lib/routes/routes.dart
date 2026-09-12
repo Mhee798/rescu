@@ -37,7 +37,10 @@ abstract class Routes {
     ),
     GetPage(
       name: deal,
-      page: () => const DealDetailsScreen(),
+      // Not `const`: the screen has to carry the same tag the binding used, so
+      // it resolves the controller belonging to this push rather than whichever
+      // deal page is already on the stack.
+      page: () => DealDetailsScreen(tag: Get.parameters['id']),
       binding: DealDetailsBinding(),
       middlewares: [ScreenViewMiddleware()],
     ),

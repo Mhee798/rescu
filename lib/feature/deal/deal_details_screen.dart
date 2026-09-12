@@ -7,7 +7,16 @@ import '../shared_widget/the_network_image.dart';
 import 'deal_details_controller.dart';
 
 class DealDetailsScreen extends GetView<DealDetailsController> {
-  const DealDetailsScreen({super.key});
+  const DealDetailsScreen({super.key, this.tag});
+
+  /// The deal id from the route. `GetView` passes this straight to `Get.find`,
+  /// and `DealDetailsBinding` registers under the same value, so two `/deal`
+  /// routes for different deals resolve to different controllers.
+  // `GetView.tag` is a final field, not a getter, so shadowing it is the only
+  // way to supply a tag — it is the pattern GetView's own doc comment shows.
+  @override
+  // ignore: overridden_fields
+  final String? tag;
 
   @override
   Widget build(BuildContext context) {
@@ -18,7 +27,7 @@ class DealDetailsScreen extends GetView<DealDetailsController> {
       body: Obx(() {
         final deal = controller.deal;
         if (deal != null) {
-          return _DealBody(deal: deal);
+          return _DealBody(deal: deal, controller: controller);
         }
         final error = controller.loadError;
         if (error != null) {
@@ -109,10 +118,14 @@ class _LoadFailure extends StatelessWidget {
   }
 }
 
-class _DealBody extends GetView<DealDetailsController> {
+/// Takes the controller as a parameter rather than extending `GetView`. The
+/// controller is registered under a tag, and a nested `GetView` has no way to
+/// know which one — it would call the untagged `Get.find` and throw.
+class _DealBody extends StatelessWidget {
   final DealModel deal;
+  final DealDetailsController controller;
 
-  const _DealBody({required this.deal});
+  const _DealBody({required this.deal, required this.controller});
 
   @override
   Widget build(BuildContext context) {
