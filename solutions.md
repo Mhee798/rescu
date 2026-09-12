@@ -106,7 +106,7 @@ reproduced or confirmed yet, so no cause is claimed here.
 **Evidence** —
 
 ## RES-107 · Deep link opens to a crash
-**Status** investigating — reproduced, cause identified, not yet fixed
+**Status** fixed — reproduced, fixed, re-verified on device
 
 **Symptom** `rescu://open/deal?id=42&source=push` crashes with `type 'Null' is not a subtype of type 'DealModel'`. The same deal opens fine from the home feed. A fallback/error screen is explicitly not an acceptable resolution.
 
@@ -124,11 +124,61 @@ link by definition does not.
 `lib/` (`grep -rn "as DealModel" lib/` → 1 hit), so the runtime message pins the
 throw site without needing a stack frame.
 
-**Fix** — not yet applied.
+**Fix** The controller now obtains the deal from whichever source the entry
+point actually has, instead of assuming one of them.
+`Get.arguments is DealModel` → adopt it synchronously; otherwise parse
+`Get.parameters['id']` and `dealRepo.fetchById`. `late final DealModel deal`
+became `Rxn<DealModel>` with a nullable getter, and the screen renders content /
+error / spinner off that.
 
-**Alternative rejected** — *(to be written with the fix)*
+Three details are load-bearing rather than incidental:
 
-**Edge cases** — *(to be written with the fix)*
+- **Keeping `late final` would have moved the crash, not removed it.** Any read
+  before an async assignment throws `LateInitializationError` — a different
+  failure, in whatever reads first rather than in `onInit`. The field had to
+  become genuinely optional for the async path to be expressible at all.
+- **The `ever(cartService.itemCount, …)` worker moved into `_watchCart()`,
+  called only from `_adopt()`.** Its callback reads the deal's id, so
+  subscribing in `onInit` as before would let a cart change *during* the
+  deep-link fetch reach a deal that does not exist yet. It is also guarded
+  against a second registration so `retry()` cannot leave two subscriptions —
+  which would have quietly made RES-103 worse via this fix.
+- **The add-to-bag button is not rendered while the deal is absent**, via its
+  own `Obx` on `bottomSheet`. Guarding only the controller would have left a
+  live button on screen during the fetch window.
+
+The fast path is unchanged in behaviour: `_adopt` runs synchronously inside
+`onInit`, so a tap from the feed still has its deal before the first build and
+gains no loading frame.
+
+**Alternative rejected** *Always fetch by id and ignore `Get.arguments`.* One
+code path instead of two, and always-fresh stock. Rejected because it adds a
+network round trip and a spinner to the path the ticket explicitly says already
+works, to fix a path that does not — paying a regression on the common case for
+the rare one. The `quantityLeft` re-check already covers staleness on the fast
+path.
+
+Also rejected, and worth naming because it is the quickest edit: making the cast
+`Get.arguments as DealModel?` and rendering a "deal unavailable" screen when it
+is null. That compiles and stops the crash, but the deep link would still never
+show deal 42 — the ticket's requirement is a fully working page, and an error
+screen is explicitly not an acceptable resolution.
+
+**Edge cases**
+- *Unknown or non-numeric id.* `getDealById` throws `ApiException(404)`; the
+  screen shows a plain message and a Try again button. This is **not** the
+  fallback the ticket forbids — that prohibition is about deal 42, which exists
+  and now renders fully. A link to a deal the catalog genuinely does not have
+  has no working page to land on.
+- *Transient failure.* Non-404 failures get a retryable message rather than the
+  404 wording, since the deal may well exist.
+- **Not handled, deliberately:** the `ever` worker is stored in `_cartWorker`
+  but never disposed. That is RES-103's cause and fixing it here would fold two
+  tickets into one commit. This change moves the registration; it deliberately
+  does not change its lifetime.
+- **Not handled, deliberately:** a deep link fired while the app is already
+  top-most in the foreground still does nothing (Path 4 above). It is an
+  `am start` artefact rather than a user flow.
 
 **Evidence** Reproduced on PTP N49 (Android 16), debug build, 2026-09-12 17:03–17:07.
 
@@ -163,6 +213,33 @@ push-notification tap necessarily resumes the app from the background or a cold
 start, which is Path 3 or Path 1. It is therefore **not** treated as a second
 defect in scope for this ticket — see "Edge cases" once the fix lands, and the
 finding below.
+
+**After the fix** — re-verified on the same device, 17:30–17:32.
+
+| Path | Before | After |
+|---|---|---|
+| adb cold start | red `ErrorWidget` | deal 42 "Mystery Japanese Basket" renders in full |
+| adb warm start, backgrounded | red `ErrorWidget` | same, renders in full |
+| in-app simulator dialog | red `ErrorWidget` | same, renders in full |
+| tap from home feed | worked | still works, no loading frame |
+| adb warm start, already top-most | nothing happens | unchanged (out of scope) |
+| `?id=999` (not in catalog) | n/a | message + Try again, no crash |
+
+Console on the deep-link path, showing the id being fetched and `source`
+surviving into analytics:
+```
+[rescu 17:31:34.584] analytics: screen_view {screen: /deal}
+[rescu 17:31:34.931] GET /deals/42
+[rescu 17:31:34.941] analytics: deal_details_view {deal_id: 42, source: push}
+```
+Add to bag on the deep-linked page fires the availability re-check exactly once
+for deal 42 — no duplicate subscription. (It also fires once for deal 1, viewed
+earlier in the same session: that is RES-103 reproducing incidentally, and is
+left alone here.)
+
+Screenshots: `docs/res-107/03-cold-start-fixed.png`,
+`docs/res-107/04-unknown-id-error-state.png`.
+`fvm flutter analyze` clean, `fvm flutter test` 1/1.
 
 *Where the platform route enters the app.* There is no deep-link code in this
 repo at all — `MainActivity` is a bare `FlutterActivity`, and `grep -rn
