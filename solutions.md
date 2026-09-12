@@ -106,15 +106,55 @@ reproduced or confirmed yet, so no cause is claimed here.
 **Evidence** —
 
 ## RES-107 · Deep link opens to a crash
-**Status** not started
+**Status** investigating — reproduced, cause identified, not yet fixed
 
 **Symptom** `rescu://open/deal?id=42&source=push` crashes with `type 'Null' is not a subtype of type 'DealModel'`. The same deal opens fine from the home feed. A fallback/error screen is explicitly not an acceptable resolution.
 
-**Root cause** —
-**Fix** —
-**Alternative rejected** —
-**Edge cases** —
-**Evidence** —
+**Root cause** `DealDetailsController.onInit` obtains the deal exclusively from the
+navigation payload — `deal = Get.arguments as DealModel` — and never reads the
+`id` that the route already carries. Both feed entry points
+(`deal_card.dart:24`, `flash_deals_section.dart:50`) call `Get.toNamed(..., arguments: deal)`
+and so hand over a fully built model; the deep-link entry point
+(`home_screen.dart:135`) calls `Get.toNamed(route)` with no arguments. On that
+path `Get.arguments` is `null` and the cast throws. The controller is therefore
+only constructible from a caller that already holds a `DealModel`, which a deep
+link by definition does not.
+
+`deal_details_controller.dart:28` is the **only** cast to `DealModel` anywhere in
+`lib/` (`grep -rn "as DealModel" lib/` → 1 hit), so the runtime message pins the
+throw site without needing a stack frame.
+
+**Fix** — not yet applied.
+
+**Alternative rejected** — *(to be written with the fix)*
+
+**Edge cases** — *(to be written with the fix)*
+
+**Evidence** Reproduced on PTP N49 (Android 16), debug build, 2026-09-12 17:03–17:07.
+
+*Path 1 — adb cold start (app not running):*
+```
+adb shell am force-stop dev.rescu.rescu
+adb shell "am start -a android.intent.action.VIEW \
+  -d 'rescu://open/deal?id=42&source=push' dev.rescu.rescu"
+```
+Red `ErrorWidget`: `type 'Null' is not a subtype of type 'DealModel' in type cast`.
+Screenshot: `docs/res-107/01-cold-start-crash.png`.
+logcat confirms the route was entered before the throw:
+`I/flutter: [rescu 17:03:55.641] analytics: screen_view {screen: /deal}`.
+
+*Path 2 — in-app simulator (app already running):* Home → ⋮ → Simulate deep link…
+→ Open, with the prefilled `rescu://open/deal?id=42&source=push`. Same crash.
+Screenshot: `docs/res-107/02-in-app-dialog-crash.png`.
+
+*Path 3 — adb warm start (app already in foreground):* the same `am start` is
+accepted by the platform (`Warning: Activity not started, intent has been
+delivered to currently running top-most instance`) but the app **does not
+navigate and does not crash** — it stays on Home. So the intent is received and
+then dropped somewhere before routing. This is a second, separate defect on the
+same requirement ("the link must land the user on a fully working deal page")
+and is *not* on the causal path of the crash. Scope decision pending — see
+`docs/ai-log.md` entry for 2026-09-12.
 
 ---
 
