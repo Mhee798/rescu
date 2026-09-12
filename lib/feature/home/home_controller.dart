@@ -15,7 +15,15 @@ class HomeController extends GetxController {
   final flashDeals = <DealModel>[].obs;
   final isLoading = true.obs;
   final todayOnly = false.obs;
-  final scrollOffset = 0.0.obs;
+
+  /// Two threshold flags rather than the raw offset. `_onScroll` fires on every
+  /// scroll frame, and an `Rx` that carries the offset therefore notifies on
+  /// every one of them; `Rx.value` skips the notification when the value is
+  /// unchanged (`rx_impl.dart:101`), so a bool flips twice per journey down the
+  /// feed instead of 60-120 times a second. Nothing outside this class ever
+  /// needed the offset itself — both uses were threshold comparisons.
+  final isScrolled = false.obs;
+  final showScrollToTop = false.obs;
 
   final scrollController = ScrollController();
   final refreshController = RefreshController();
@@ -38,7 +46,9 @@ class HomeController extends GetxController {
   }
 
   void _onScroll() {
-    scrollOffset.value = scrollController.offset;
+    final offset = scrollController.offset;
+    isScrolled.value = offset > 4;
+    showScrollToTop.value = offset > 800;
   }
 
   Future<void> _initialLoad() async {
