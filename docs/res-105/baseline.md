@@ -242,6 +242,46 @@ ELE-L29's `page=7` (122), so its column is mildly favoured. And this is a
 deliberately extreme gesture; it is the ceiling of the problem, not the typical
 case — the flick figures above are the typical case.
 
+## Does the display's refresh rate matter?
+
+Two separate effects, and only one of them is about the code.
+
+**The budget.** `BUILD` costs 1.135 ms per frame on the Magic 7 Pro with the bug
+present. That is 13.6 % of a 120 Hz budget and 6.8 % of a 60 Hz one — the same
+work, twice as close to dropping a frame, purely because the deadline halved.
+
+**How often the waste runs.** The defect rebuilt the feed once per *frame*, so
+at 120 Hz it ran twice as often per second. Per-frame cost hides that; per
+second of scrolling does not:
+
+| | `BUILD` per frame | `BUILD` per second of scrolling |
+|---|---|---|
+| P30 Pro, 60 Hz, control | 2.682 ms | **155.6 ms/s** |
+| Magic 7 Pro, 120 Hz, control | 1.135 ms | **128.2 ms/s** |
+| P30 Pro, 60 Hz, fixed | 0.040 ms | **2.3 ms/s** |
+| Magic 7 Pro, 120 Hz, fixed | 0.021 ms | **2.0 ms/s** |
+
+Before the fix both devices burn 13-16 % of wall-clock time rebuilding the feed
+while the user scrolls; after, about 0.2 %. The flagship's per-frame figure
+being half the P30's is not it doing less work — it is doing the same work twice
+as often on a faster core.
+
+**What I could not measure.** I tried to isolate the refresh rate from the
+hardware by forcing the Magic 7 Pro to 60 Hz — `settings put system
+peak_refresh_rate 60.0` and `min_refresh_rate 60.0`, confirmed by
+`dumpsys SurfaceFlinger` reporting `activeFrameRateMode={fps=60.00 Hz}`. It did
+not hold for the app: both runs recorded a median inter-frame gap of 8.3 ms,
+i.e. 120 Hz, so the device overrode the setting for the foreground app. The two
+rows above therefore still differ in SoC as well as refresh rate and cannot
+separate the two. Settings restored afterwards.
+
+Those two runs are not wasted, though — they are an unplanned replication. The
+"60 Hz" control and the 120 Hz control are separate builds, installs and
+measurement sessions, and produced `BUILD` per frame of **1.135 ms** and
+**1.138 ms**. Three tenths of a percent apart, which is the best evidence in
+this document that the procedure itself is stable and the differences reported
+elsewhere are real.
+
 ## Memory — grows, but nothing like "until the OS kills the app"
 
 `adb shell dumpsys meminfo dev.rescu.rescu`, fresh launch, then 20 swipes at a
