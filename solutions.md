@@ -147,14 +147,35 @@ logcat confirms the route was entered before the throw:
 → Open, with the prefilled `rescu://open/deal?id=42&source=push`. Same crash.
 Screenshot: `docs/res-107/02-in-app-dialog-crash.png`.
 
-*Path 3 — adb warm start (app already in foreground):* the same `am start` is
-accepted by the platform (`Warning: Activity not started, intent has been
-delivered to currently running top-most instance`) but the app **does not
-navigate and does not crash** — it stays on Home. So the intent is received and
-then dropped somewhere before routing. This is a second, separate defect on the
-same requirement ("the link must land the user on a fully working deal page")
-and is *not* on the causal path of the crash. Scope decision pending — see
-`docs/ai-log.md` entry for 2026-09-12.
+*Path 3 — adb warm start, app backgrounded (home button pressed first):*
+`Warning: Activity not started, its current task has been brought to the front`,
+then `analytics: screen_view {screen: /deal}` and the same crash. So resuming
+from the background routes correctly and hits the same cast.
+
+*Path 4 — adb warm start, app already top-most in the foreground:* the platform
+reports `intent has been delivered to currently running top-most instance`, but
+the app neither navigates nor crashes — it stays on Home, and no `screen_view`
+is logged, so the route was never pushed.
+
+Three of the four paths crash. Path 4 is the only one that does not route, and
+it is an artefact of driving the app with `am start` rather than a user flow: a
+push-notification tap necessarily resumes the app from the background or a cold
+start, which is Path 3 or Path 1. It is therefore **not** treated as a second
+defect in scope for this ticket — see "Edge cases" once the fix lands, and the
+finding below.
+
+*Where the platform route enters the app.* There is no deep-link code in this
+repo at all — `MainActivity` is a bare `FlutterActivity`, and `grep -rn
+"onNewIntent\|didPushRoute\|onGenerateRoute" lib/ android/` returns nothing.
+Routing comes entirely from `flutter_deeplinking_enabled` in the manifest plus
+the framework: `GetMaterialApp`'s default constructor sets `routerDelegate =
+null` (`get_material_app.dart:127`) and builds a plain `MaterialApp` with
+`onGenerateRoute: generator` (`:279`), so `WidgetsApp._usesRouterWithDelegates`
+is false and `didPushRouteInformation` (`flutter/lib/src/widgets/app.dart:1549`)
+falls through to `navigator.pushNamed(uri)`. That is why the platform route
+reaches `/deal` with `id` and `source` intact as `Get.parameters`, and why
+`Get.arguments` is null: the framework pushes a *name*, never an argument
+object. Nothing on the platform side is misconfigured.
 
 ---
 
