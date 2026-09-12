@@ -45,6 +45,7 @@ rather than remembered.
 | 2026-09-12 | 17:10 | 17:50 | RES-107 fix, peer review round, lifecycle measurement, follow-up fixes |
 | 2026-09-12 | 19:40 | 21:00 | Code review pass, RES-106/103/102 fixes, commit split, RES-102 negative control |
 | 2026-09-12 | 21:40 | 22:09 | F1 deep-link-over-open-deal confirmation, per-id tag fix, seven-case device verification |
+| 2026-09-12 | 22:10 | 23:15 | Peer review round on the tag fix; RES-105 investigation and baselines on two devices |
 
 ---
 
@@ -203,3 +204,47 @@ quoting — I had already written that one down — but that writing a lesson do
 is not the same as having a check that applies it. The check here is cheap:
 every deep-link measurement now starts by confirming the *expected* id and
 source appear in the log line, before reading anything else from the run.
+
+### 2026-09-12 · RES-105 (a device spec I wrote without reading it)
+**Suggested:** The baseline document opened with a comparison table of the two
+test devices, listing the PTP N49 at **16 GB** of RAM, and the memory section
+then reasoned from it — "not the runaway the ticket describes, on 16 GB of RAM
+with a 100 MB image cache". Every other figure in that document came from a
+command whose output is quoted; this one came from nowhere.
+
+**Why it was wrong:** `/proc/meminfo` reports `MemTotal: 11502928 kB` — 12 GB.
+The error is small and changes no conclusion, which is exactly what makes it
+worth an entry: it sat in a table where every neighbouring cell was measured,
+so it inherited their credibility. In a document whose whole argument is "here
+are the numbers, run the commands yourself", one invented cell is the kind of
+thing that makes a reader re-check the ones that matter.
+
+**How it was caught:** The user knew the phone. I had not run `cat
+/proc/meminfo` on that device at all — the ELE-L29's figure came from a real
+command, and I filled the other column in by assumption while writing the table.
+
+**Done instead:** Both cells now carry the raw `MemTotal` alongside the rounded
+figure, so the number is checkable rather than assertable. Rule taken from it:
+if a value is going into a table of measurements, it gets a command, even when
+it is "just" a spec.
+
+### 2026-09-12 · RES-105 (a malformed request that killed the app under test)
+**Suggested:** To record a timeline over the VM Service HTTP interface I called
+`setVMTimelineFlags?recordedStreams=Dart,Embedder`, having already had
+`recordedStreams=["Dart","Embedder"]` rejected as invalid params.
+
+**Why it was wrong:** The HTTP interface hands every query parameter to the RPC
+as a string, and the VM expects a list. The unbracketed form did not return an
+error — it segfaulted the Dart VM (`Fatal signal 11 (SIGSEGV)` in
+`__strlen_aarch64` on a DartWorker thread), taking the app and the profiling
+session with it. A measurement harness that can kill the thing being measured is
+worse than one that refuses to run.
+
+**How it was caught:** `curl` started returning nothing; the run log ended in a
+native stack trace and `Lost connection to device`.
+
+**Done instead:** The accepted form is `recordedStreams=[Dart,Embedder]` —
+brackets, no quotes. Restarted and re-measured. The wider point is that the two
+rejected forms failed very differently and only one of them said so; after this,
+any VM Service call that has not returned a clean result is verified with
+`getVersion` before the next one is sent.
