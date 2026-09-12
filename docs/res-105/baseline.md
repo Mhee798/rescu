@@ -9,7 +9,7 @@ symptom the ticket describes:
 | OS | Android 16 (API 36) | Android 10 (API 29) |
 | Screen | 1280×2800, density 560 (DPR 3.5) | 1080×2340, density 480 (DPR 3.0) |
 | Refresh | 60/90/120 Hz | 60 Hz |
-| RAM | 16 GB | 8 GB |
+| RAM | 12 GB (`MemTotal` 11,502,928 kB) | 8 GB (`MemTotal` 7,789,116 kB) |
 
 Build: `fvm flutter run --profile`, 2026-09-12 22:29–23:10. The ELE-L29 is the
 "mid-range Android" the ticket is written about; the PTP N49 is not. Both sets
