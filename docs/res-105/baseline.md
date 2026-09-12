@@ -187,6 +187,46 @@ Zero frames over even the 120 Hz budget; raster p90 is **5.6× faster** than the
 ELE-L29's. The jank half of RES-105 does not reproduce on this hardware at all,
 which is why the second device was brought in.
 
+## Worst case found: the scroll-to-top button
+
+`HomeController.scrollToTop` is `animateTo(0, duration: 400ms, curve: easeOut)`.
+From the bottom of a fully loaded feed that drives the viewport through every
+card in the list inside four tenths of a second — far more new content per frame
+than any thumb produces. It is also a *tap*, so unlike a flick it is perfectly
+reproducible from `adb`.
+
+Procedure: swipe to the end of the feed, clear the timeline, `input tap` on the
+FAB, capture.
+
+| | frames | UI p50 | UI p90 | UI max | raster p50 | raster p90 | raster max | over budget |
+|---|---|---|---|---|---|---|---|---|
+| ELE-L29 · 122 deals · budget 16.67 ms | 91 | 2.28 | 9.91 | **42.78** | 11.35 | 16.05 | **83.51** | **12** (6 UI + 6 raster) |
+| PTP N49 · 100 deals · budget 8.33 ms | 175 | 1.02 | 4.30 | 8.30 | 2.29 | 4.36 | 16.56 | 1 (raster) |
+
+On the ELE-L29 that is **twelve dropped frames from one button press**, and the
+worst raster frame at 83.51 ms is five vsync periods — a visible stall, not a
+statistical blip. A 400 ms animation took 91 frames (~1.5 s at 60 Hz), so the
+jank stretches the animation itself.
+
+What is inside the two worst frames, and it names both remaining causes
+directly:
+
+| frame | dominant child |
+|---|---|
+| UI, 42.78 ms | `LAYOUT` **35.11 ms**, `BUILD` 16.58 ms |
+| raster, 83.51 ms | `SurfaceFrame::Encode` 81.01 ms, of which **`UploadTextureToPrivate` 73.16 ms** |
+
+`UploadTextureToPrivate` is the GPU upload of decoded bitmaps. **73 ms of a
+single frame spent pushing oversized textures** is cause ③ stated by name in the
+engine's own trace, rather than inferred from image dimensions. And `LAYOUT` at
+35 ms in the worst UI frame is the list re-laying-out its children, which is the
+`ListView(children: [...])` half of cause ②.
+
+Two caveats. The PTP N49 run had reached only `page=5` (100 deals) against the
+ELE-L29's `page=7` (122), so its column is mildly favoured. And this is a
+deliberately extreme gesture; it is the ceiling of the problem, not the typical
+case — the flick figures above are the typical case.
+
 ## Memory — grows, but nothing like "until the OS kills the app"
 
 `adb shell dumpsys meminfo dev.rescu.rescu`, fresh launch, then 20 swipes at a
