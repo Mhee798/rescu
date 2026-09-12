@@ -46,6 +46,7 @@ rather than remembered.
 | 2026-09-12 | 19:40 | 21:00 | Code review pass, RES-106/103/102 fixes, commit split, RES-102 negative control |
 | 2026-09-12 | 21:40 | 22:09 | F1 deep-link-over-open-deal confirmation, per-id tag fix, seven-case device verification |
 | 2026-09-12 | 22:10 | 23:15 | Peer review round on the tag fix; RES-105 investigation and baselines on two devices |
+| 2026-09-13 | 23:15 | 02:10 | RES-105 fixes, per-cause attribution, refresh-rate isolation, fling before/after, review round |
 
 ---
 
@@ -299,3 +300,37 @@ rather than deleted, since they were the more dramatic ones and a reader
 comparing revisions should see which way the correction went. Widget-build
 tracking is still used, but only for *counting* rebuilds, which is what it is
 reliable for.
+
+### 2026-09-13 · RES-105 (an estimate sitting in a table of measurements)
+**Suggested:** The RES-105 write-up stated that `ImageCache`'s 100 MB default
+"holds ten images" before the fix and about twenty-six after, and put that row
+in the same table as the decode sizes Flutter had reported directly. I also
+wrote that the process memory figures showed a cache "saturated at its 100 MB
+ceiling and evicting", and rested the ticket's second symptom on it.
+
+**Why it was wrong:** Two numbers in that section could not both be true. Native
+Heap peaked at 38 MB while the cache was described as holding 100 MB. Decoded
+pixel buffers are Skia allocations and do not appear in that field, so the
+`dumpsys meminfo` figures were measuring a pool the images are not in — the
+memory half of the ticket was *unmeasured*, not "does not reproduce". The
+image-count row was derived arithmetic surrounded by measured cells, which lent
+it a credibility it had not earned, and it was also simply wrong: `ImageCache`
+counts raw `w × h × 4`, while the `debugInvertOversizedImages` message I divided
+by adds a mipmap third. Ten should have been thirteen.
+
+**How it was caught:** A review pointed at the contradiction between the two
+figures rather than at either one. Settled with the counter that defines the
+thing — `imageCache.currentSize` and `.currentSizeBytes`, logged once a second
+from a temporary probe in `main()`, removed afterwards. Control peaks at 13
+images / 95.2 MB; fixed at 36 / 99.7 MB. Per image, 7,680,000 B = 1600×1200×4
+and 2,904,768 B = 984×738×4 exactly.
+
+**Done instead:** The conclusion survived — both builds saturate the ceiling, so
+the cache evicts rather than growing without bound — but the evidence for it was
+replaced wholesale, and what the fix buys is restated as 2.8× more images
+resident rather than as any reduction in footprint. The rule taken from it: when
+a document is mostly measurements, a derived number has to be labelled as one or
+measured, because it will otherwise be read at the same weight as its
+neighbours. The tell was available before the review — I had two numbers about
+the same thing that disagreed by a factor of two and did not put them side by
+side.
