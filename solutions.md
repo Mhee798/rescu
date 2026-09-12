@@ -443,6 +443,51 @@ waste is gone; the rest is left, named.
 
 Peak Native Heap across all 122 deals: 38,248 kB → 34,963 kB.
 
+**Which of the three fixes actually did the work.** PROBLEM.md asks for an
+improvement attributed to each cause, so the three were measured separately
+rather than only together: five builds on the same device in one session, each
+the same scripted swipe three times, tracking off, medians below.
+
+| build | BUILD /frame | LAYOUT /frame | UI p90 | raster p50 |
+|---|---|---|---|---|
+| control | 2.682 ms | 1.943 ms | 7.14 ms | 8.27 ms |
+| ① `Obx` scope only | **0.091** | **0.187** | **2.59** | 6.75 |
+| ① + ② `ListView.builder` | 0.090 | 0.204 | 2.83 | 6.80 |
+| ① + ② + ③ images | 0.040 | 0.168 | 1.50 | 7.66 |
+| ③ images only | 3.289 | 2.366 | 7.66 | 7.37 |
+
+**Cause ① is essentially the entire frame-time win.** On its own it takes
+`BUILD` from 2.682 ms to 0.091 ms per frame — 97 % — and the two later fixes add
+nothing to that column that is distinguishable from noise. The ③-only row is the
+control within noise, which is the expected result and a useful check: the image
+fix is raster-side and should not touch the UI thread.
+
+*What ② is worth, measured where it can show.* With ① in place the `Obx` runs
+roughly twice per swipe instead of once per frame, so the spread it feeds barely
+runs during scrolling — which is why ② is invisible in the table above. The
+gesture that exercises it is one that changes the list. Tapping "Pickup today"
+twice with all 122 deals loaded:
+
+| | ① only | ① + ② + ③ |
+|---|---|---|
+| `DealCard` objects constructed | **386** | **9** |
+| `BUILD` total | 12.00 ms | 8.14 ms |
+| `BUILD` worst frame | 4.46 ms | 2.56 ms |
+| frames over 16.7 ms | 0 | 0 |
+
+A 43× reduction in widget construction, and no dropped frame on either side.
+So ② is a real improvement that this device never needed: it matters for a
+longer list, a slower phone, or a feed that changes more often than this one
+does. Stated that way rather than folded into the headline.
+
+*What ③ is worth.* Nothing measurable in frame time on these gestures — raster
+p50 moves between 6.75 and 8.27 ms across all five builds with no ordering. Its
+attributed improvement is the decode and cache figures above: 10,000 KB → 3,781
+KB held per image, the 100 MB cache going from ten images to twenty-six, and
+peak Native Heap 38,248 kB → 34,963 kB. The 73.16 ms `UploadTextureToPrivate`
+frame that motivated it belongs to the scroll-to-top case, and that case is too
+noisy to claim from — see below.
+
 **What did not improve, and I could not make it.** The worst case found is the
 scroll-to-top FAB — `animateTo(0, 400ms)` from the end of a loaded feed, which
 drives the viewport through every card in the list. Four runs per side:
