@@ -270,7 +270,10 @@ analytics: deal_details_view {deal_id: 1, source: home}   ×4
 [20:54:45.238] re-checking availability for deal 1
 ```
 
-4 → 1, where 1 is the live screen doing its job.
+4 → 1, where 1 is the live screen doing its job — for a single deal route. The
+general figure is **one per live deal route**, which since the RES-107 tag change
+is two when a deep link is stacked over an open deal page; measured, and covered
+under Edge cases above.
 
 ## RES-104 · Duplicate deals in the home feed
 **Status** not started
