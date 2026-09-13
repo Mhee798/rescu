@@ -139,11 +139,19 @@ class DealDetailsController extends GetxController {
   void addToCart() {
     final deal = _deal.value;
     if (deal == null) return;
-    // The button is already disabled by then; this is the same rule stated
-    // where the bag is actually written, so a second caller cannot get round
-    // it — and the two cannot drift, because both ask the deal itself.
+    // A courtesy guard, not the enforcement. What guarantees the bag never
+    // holds an expired flash line is `CartService`'s sweep
+    // (`cart_service.dart:75`), which runs on the clock rather than on the
+    // write; this one only saves the user a tap that would be undone a second
+    // later by a removal notice.
+    //
+    // It has to read that same clock. `DateTime.now()` runs ahead of
+    // `ClockService` by up to one tick, so in that window the card still shows
+    // a live countdown and an enabled button while this guard rejects the tap
+    // — the exact disagreement between badge and bag that one shared clock
+    // exists to prevent.
     final endsAt = deal.flashSaleEndsAt;
-    if (endsAt != null && !DateTime.now().isBefore(endsAt)) {
+    if (endsAt != null && !cartService.clock.now.isBefore(endsAt)) {
       Get.snackbar(
         'Flash sale ended',
         '${deal.name} is no longer on flash sale.',
