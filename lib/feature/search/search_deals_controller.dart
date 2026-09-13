@@ -47,6 +47,15 @@ class SearchDealsController extends GetxController {
       isLoading.value = false;
       return;
     }
+    // `results` deliberately keeps the previous query's items until the new
+    // ones arrive — clearing here would flash an empty state between every
+    // keystroke. That makes the controller's state knowingly stale for a few
+    // hundred milliseconds, and what keeps it off the screen is the order of
+    // the checks in the view: `isLoading` is tested before `results`
+    // (`search_screen.dart:24`). The guarantee is display-level, not
+    // state-level, and a change to that `Obx` — results under a small inline
+    // spinner, say — would bring the reported symptom back without touching
+    // this file.
     isLoading.value = true;
     hasSearched.value = true;
     // Captured before the await: after it, `_inFlight` may be someone else's.
@@ -57,6 +66,13 @@ class SearchDealsController extends GetxController {
       if (!identical(request, _inFlight)) return;
       results.assignAll(found);
     } catch (e) {
+      // Unreachable against this backend: `searchDeals`
+      // (`fake_api_service.dart:95`) is a delay and a filter with no throw
+      // path. Left as it was found rather than extended — if it could fail,
+      // the live-failure branch would need `results.clear()` or an error
+      // state, because logging and returning leaves the previous query's
+      // results on screen under the new text, which is this ticket's symptom
+      // arriving by another route.
       if (!identical(request, _inFlight)) return;
       LogService.error('search failed', e);
     } finally {
@@ -66,11 +82,4 @@ class SearchDealsController extends GetxController {
       if (identical(request, _inFlight)) isLoading.value = false;
     }
   }
-
-  /// The request cannot be cancelled, only disowned. `Future` has no
-  /// cancellation in Dart, the work is a `Future.delayed` inside a file this
-  /// exercise forbids editing, and there is no client or isolate to tear down —
-  /// so an abandoned search still runs to completion and its result is thrown
-  /// away. Reducing how many are started is what a debounce would be for, and
-  /// that is a different problem from this one.
 }
