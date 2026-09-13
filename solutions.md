@@ -276,15 +276,135 @@ is two when a deep link is stacked over an open deal page; measured, and covered
 under Edge cases above.
 
 ## RES-104 · Duplicate deals in the home feed
-**Status** not started
+**Status** fixed — root cause reproduced deterministically at the controller,
+each guard ablated. Not reproduced on device: the timing window is narrower
+than the gesture, with numbers below.
 
-**Symptom** Pull-to-refresh while the next page is still loading intermittently yields duplicate cards, or more items than the catalog holds.
+**Symptom** Scroll to the bottom so the next page starts loading, then pull to
+refresh while it is still loading. Intermittently the feed shows duplicated
+cards, or more items than the catalog contains.
 
-**Root cause** —
-**Fix** —
-**Alternative rejected** —
-**Edge cases** —
-**Evidence** —
+**Root cause** `refreshDeals` and `loadMore` both write `deals` and the page
+counter, and neither can tell that the other moved while it was awaiting. The
+duplication is not the double write — one ordering of it is harmless — it is
+that the counter ends up describing a list it does not match:
+
+| | `deals` | `_page` |
+|---|---|---|
+| bottom reached, `loadMore` requests page 2 | 20 | 1 → **2** |
+| user pulls down, `refreshDeals` resets | 20 | 2 → **1** |
+| page 1 returns first, `assignAll` | **20** | 1 |
+| page 2 returns, from before the refresh, `addAll` | **40** | **1** |
+
+Nothing looks wrong at that point — forty items, no repeats. The list holds two
+pages while the counter says one, so the *next* `loadMore` increments to 2 and
+fetches a page that is already there: **60 items, 20 of them duplicates**. The
+card that appears twice was never touched by the refresh the user performed,
+which is why the symptom reads as unrelated to it.
+
+The reverse ordering is clean: if page 2 lands first and the refresh overwrites
+it, `assignAll` leaves 20 items and the counter at 1 — consistent. That is what
+"intermittently" means here; it is one ordering of two.
+
+`_isFetchingMore` cannot help. It guards `loadMore` against `loadMore`, and
+`refreshDeals` reads no flag at all, so three of the four overlapping pairs are
+unguarded.
+
+**Fix** Three changes, in `home_controller.dart`:
+
+- **A generation counter.** Every refresh increments it; both writers capture it
+  before awaiting and compare after. A response whose generation no longer
+  matches is discarded rather than written. That covers a stale load landing
+  after a refresh, and a stale refresh landing after a newer one.
+- **An `_isRefreshing` flag that `loadMore` respects.** The generation counter
+  cannot help a load that *starts* during a refresh: it captures the current
+  generation legitimately, but reads a pre-refresh page number, and would append
+  a page from the middle of the catalog onto a list about to be reset to its
+  first. Predicted while designing the counter, then confirmed — the test for it
+  fails with the counter alone.
+- **The page counter advances after a successful response**, not before the
+  request, which deletes the `_page--` rollback in the catch block.
+
+**Alternative rejected** *Deduplicate at render time — `toSet()`, or distinct
+by id over `visibleDeals`.* One line, and the cards stop repeating. Rejected
+because it is CLAUDE.md §3's named example: the write that produced the
+duplicates still happens, the counter still disagrees with the list, and the
+"more items than the catalog contains" half of the symptom survives — the feed
+would simply stop showing some of them. It also silently caps the feed at
+however many distinct ids the broken paging happened to fetch.
+
+Also rejected: *making `refreshDeals` await the in-flight `loadMore` before
+starting.* Correct, and smaller than what was done. Rejected because it makes
+the user's pull-to-refresh wait on a request they did not ask for — up to the
+backend's 950 ms — to fix a defect they cannot see.
+
+**Edge cases**
+- *Two refreshes overlapping.* The older one's response is discarded. Covered.
+- *A load that fails.* `_page--` used to run on whatever the counter held after
+  a concurrent refresh reset it, taking it to zero, from which the next load
+  refetches page one on top of itself. **This path is unreachable today** —
+  `getDeals` never throws, and `_rng` in `fake_api_service.dart` is used only
+  for latency and search breadth. It is a latent defect, not a live second
+  cause, and an earlier note of mine in `docs/ai-log.md` described it as live;
+  that is corrected there. The fix deletes the rollback rather than leaving it
+  armed, and the test for it drives the failure through the scripted repo.
+- **Not handled, deliberately:** `loadMore` returning early still does not call
+  `refreshController.loadComplete()`, so a load suppressed by either flag leaves
+  the footer spinning until the next one completes it. That was true of the
+  existing `_isFetchingMore` guard before this change and is a footer-state bug
+  rather than a data bug; fixing it means deciding what the footer should show
+  while a refresh is in flight, which is beyond this ticket.
+- **Not handled:** `refreshDeals` still has no error handling, so a failed pull
+  becomes an unhandled async error. Already logged under "Findings logged, not
+  fixed"; unchanged here beyond keeping the new flag in a `finally`.
+
+**Evidence** `test/home_paging_test.dart` — seven cases driven by a `DealRepo`
+that hands out a `Completer` per request, so the test chooses which response
+lands first. Against the pre-fix controller **four of the seven fail**, two of
+them on the duplicate-count assertion:
+
+```
+refresh landing before an in-flight loadMore → got 60 items, 20 of them duplicates
+a failed page load …                        → got 40 items, 20 of them duplicates
+```
+
+Each guard was then removed on its own to check it is load-bearing rather than
+decoration — this matters because the first round of ablation said only
+`_isRefreshing` was doing anything, and the other two guards were covered by
+nothing:
+
+| removed | result |
+|---|---|
+| generation check in `loadMore` | 1 case fails |
+| generation check in `refreshDeals` | 1 case fails |
+| `_isRefreshing` | 1 case fails |
+| page counter back to `_page++` / `_page--` | 1 case fails |
+
+Two of the cases need one response to be distinguishable from another response
+for the same page, since otherwise a stale write is invisible; `totalPages`
+carries that, standing in for "how fresh is this", and the assertion is on
+`hasMore`.
+
+*Not reproduced on device, and here is how close it got.* The race needs the
+refresh to **start** within the backend's 250-950 ms fetch window. Twelve
+measured attempts across two sessions — `adb` gestures, then by hand, then by
+hand using the scroll-to-top button instead of flinging back:
+
+| | gap from `loadMore` starting to `refresh` starting |
+|---|---|
+| fastest | **1.61 s** |
+| median | 1.96 s |
+| needed | **< 0.95 s** |
+| hits | **0** |
+
+The floor is structural: pull-to-refresh only arms at the top of the list while
+`onLoading` fires at the bottom, so the gesture has to cross the whole feed and
+back. Recognising the footer spinner, the 400 ms scroll-to-top animation and the
+pull itself already add to about a second before any travel. The window is real
+— it is the same window a user hits by accident, occasionally, which is what the
+ticket means by "intermittently" — but it is not one a person can aim at on this
+device, and no amount of repetition changed that. The controller-level
+reproduction is the evidence; this table is what was tried.
 
 ## RES-105 · Home feed is janky and memory keeps climbing
 **Status** three causes found and fixed, verified against a negative control on
