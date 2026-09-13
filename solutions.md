@@ -38,15 +38,138 @@ contaminate the comparison.
 ## Part A — bugs
 
 ## RES-101 · Search shows results for the wrong query
-**Status** not started
+**Status** fixed — reproduced on device, fixed, re-verified on device, five
+ordering cases with every guard ablated.
 
-**Symptom** Typing quickly in search settles on results for an earlier, shorter query.
+**Symptom** Type a word quickly, letter by letter. The correct results appear
+briefly and are then replaced by results for an earlier, shorter query.
 
-**Root cause** —
-**Fix** —
-**Alternative rejected** —
-**Edge cases** —
-**Evidence** —
+**Root cause** `searchDeals` answers short queries *more slowly* than long ones
+— `broadness = max(0, 1200 - query.length * 280)`, so one letter costs
+1100-1399 ms and five letters 180-479 ms (`fake_api_service.dart:96`). Typing
+sends the requests in one order and receives them in very nearly the reverse.
+`SearchDealsController` wrote whatever arrived:
+
+```dart
+final found = await dealRepo.search(query);
+results.assignAll(found);      // never asks whether this is still the query
+```
+
+So the first keystroke's request — the slowest — lands last and wins. The
+comment in the API file calls this out as deliberate: *"like most real backends,
+broad queries are slower than specific ones"*.
+
+Measured on device before any change, typing "sushi" as a single
+`adb shell input keyevent 47 49 47 36 37` burst:
+
+```
+20:11:12.285  GET /deals/search?q=sush  (320ms)
+20:11:12.407  GET /deals/search?q=sushi (442ms)   ← the right answer, second
+20:11:12.515  GET /deals/search?q=sus   (555ms)
+20:11:12.929  GET /deals/search?q=su    (1001ms)
+20:11:13.157  GET /deals/search?q=s     (1238ms)  ← last, and it wins
+```
+
+Screen: the box reads **sushi**, the first card is *Mystery Thai Feast* from
+*Baan Somtam Kitchen* — a match for "s", not for "sushi".
+
+*A detail that shaped the repro.* Typing with `input text` one character at a
+time does **not** reproduce it: each invocation costs about 300 ms, which is
+longer than the gap between the fast and slow responses, so "s" finishes first
+and the ordering is never inverted. The bug needs the keystrokes inside one
+process. Worth recording because "I could not reproduce it" is the wrong
+conclusion to draw from a harness that types too slowly.
+
+**Fix** Hold a token for the one request the screen is waiting on, and let only
+that request write. The token is the `Future` itself, compared with
+`identical()`.
+
+The response cannot supply the check: `searchDeals` returns
+`List<Map<String, dynamic>>` and no echo of the query — unlike `getDeals`, which
+does echo its `page`. So the comparison has to be held controller-side.
+
+**Alternative rejected** *Debounce the keystrokes.* This is the fix the ticket is
+shaped to attract, and CLAUDE.md §3 names it: *"adding a debounce alone where
+the real problem is out-of-order async responses"*. It reduces how often the
+race is entered without removing it — pause after "su" and then finish typing
+"sushi", and "su" is still the slower request and still lands last. The symptom
+gets rarer, which is worse than leaving it alone, because it stops being
+reproducible while remaining present.
+
+*Compare the query text instead of the request.* Simpler, and it reads like the
+requirement. Rejected on evidence rather than taste: it passes four of the five
+cases and fails the one where the user leaves a query and comes back to it —
+type "sushi", backspace to "sush", type "i". Two requests then carry the same
+text, the older is allowed through, and it overwrites the newer. The two are not
+interchangeable, because `checkout` mutates `quantityLeft` on the shared deal
+maps (`fake_api_service.dart:196`), so the older response can show stock that
+has since changed. The variant was built and run: `Expected: <3> Actual: <1>`.
+
+*A generation counter, as used for RES-104.* Closes the same case correctly.
+Rejected because the `Future` is already a unique token with a meaning — "the
+request the screen is waiting for" — whereas a counter has to be incremented,
+and remembered in the cleared-box branch, where the token version is simply
+null. Reaching for the counter again because it worked last time is the failure
+mode worth naming here.
+
+**Edge cases**
+- *Box cleared while a search is in flight.* The token is dropped, so the
+  response is discarded. Before this it was written into `results` and only went
+  unseen because `hasSearched` gates the view (`search_screen.dart:27`) — the
+  wrong data was in the state, one `if` away from being shown.
+- *The spinner.* Only the live request may clear `isLoading`; an earlier one
+  finishing first used to hide it while the user's answer was still coming. The
+  cleared-box branch has to clear it explicitly, because after dropping the
+  token no response is permitted to, and the screen checks `isLoading` first.
+- *A search that fails for a query the user has left.* Discarded before it can
+  log or touch the spinner.
+- **Not handled, deliberately:** the request is not cancelled, only disowned.
+  Dart `Future` has no cancellation, the work is a `Future.delayed` inside
+  `fake_api_service.dart`, which this exercise forbids editing, and there is no
+  HTTP client or isolate to tear down. `CancelableOperation` from
+  `package:async` would only stop our callback — the delay still runs — and
+  `async` is a transitive dependency, so using it means either an undeclared
+  import or a new entry in `pubspec.yaml`. Even a real `CancelToken` would not
+  remove the need for this check, since a response can already be in flight when
+  the cancel is issued.
+- **Logged, not fixed:** one request per keystroke. Typing "sushi" issues five;
+  typing it and deleting it issues nine, counted on device. That is a request
+  volume problem, not the ticket's correctness problem, and the fix for it is
+  the debounce rejected above — which should be added *with* this guard rather
+  than instead of it, if it is added at all.
+
+**Evidence** `test/search_ordering_test.dart` — five cases driven by a
+`DealRepo` that hands out a `Completer` per call and stamps a marker into each
+response, so two answers for the same query can be told apart. **Four of the
+five fail against the pre-fix controller.**
+
+Every guard was removed on its own to check it is load-bearing:
+
+| removed | result |
+|---|---|
+| the check before `assignAll` | 3 cases fail |
+| the check in `finally` that owns the spinner | 1 case fails |
+| dropping the token in the cleared-box branch | 1 case fails |
+| clearing `isLoading` in the cleared-box branch | 1 case fails |
+| the `Future` token swapped for a query-text comparison | 1 case fails |
+
+On device after the fix, same procedure, same arrival order — `q=s` still lands
+last, at 1120 ms:
+
+```
+20:52:29.156  GET /deals/search?q=sush  (301ms)
+20:52:29.327  GET /deals/search?q=sushi (465ms)
+20:52:29.471  GET /deals/search?q=sus   (618ms)
+20:52:29.903  GET /deals/search?q=su    (1043ms)
+20:52:29.939  GET /deals/search?q=s     (1120ms)
+```
+
+Screen: box reads **sushi**, first card is *Surprise Sushi Box* from *Chao
+Phraya Sushi*. The race still happens; it no longer decides what is shown.
+Clearing the box mid-flight leaves the empty prompt with no spinner.
+
+Screenshots: `docs/res-101/01-before-results-for-s.png`,
+`02-after-results-for-sushi.png`, `03-after-cleared-box.png`.
 
 ## RES-102 · Crash after leaving My orders
 **Status** fixed — reproduced, fixed, covered by a widget test, re-verified on device
