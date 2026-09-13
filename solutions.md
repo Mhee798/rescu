@@ -497,7 +497,7 @@ free-running (medians):*
 
 | | control | fixed |
 |---|---|---|
-| decode size | 1600 × 1200 | **984 × 738** |
+| decode size, feed card | 1600 × 1200 | **984 × 738** |
 | held per image | 10,000 KB | **3,781 KB** |
 | overhead Flutter reports | 7,540 KB | **1,322 KB** |
 | images the 100 MB cache holds (measured) | **13** | **36** |
@@ -508,6 +508,14 @@ residual is the aspect overhang: the source is 4:3, the card slot is 2.05:1, and
 `BoxFit.cover` crops the extra rows. A width-only hint cannot remove it, and
 `cached_network_image` does not expose `ResizeImage`'s fit policy. 82 % of the
 waste is gone; the rest is left, named.
+
+Re-measured on the shipped build after the decode-hint rewrite, since the
+earlier figures predate it: `imageCache` peaks at exactly the same 36 images /
+104,571,648 bytes, so the feed path is unchanged. The square thumbnails now
+decode the other way round, and that is measurable as a single cache delta —
+opening the cart with one item added 196,608 bytes, which is 256 × 192 × 4 to
+the byte. The width-only version would have added 110,592 (192 × 144 × 4) and
+upscaled it.
 
 Peak Native Heap across all 122 deals: 38,248 kB → 34,963 kB.
 
