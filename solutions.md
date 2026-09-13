@@ -333,9 +333,9 @@ in memory is claimed.
 `HomeScreen.build` wrapped the entire `Scaffold` in a single `Obx` whose first
 statement was `controller.scrollOffset.value`, and `HomeController._onScroll`
 assigned that offset on every scroll callback. So every scroll frame invalidated
-the whole feed subtree. Measured with `ext.flutter.profileWidgetBuilds`: **23
-`Scaffold` rebuilds across 23 rendered frames** — one per frame, not
-"frequently".
+the whole feed subtree. Measured with `ext.flutter.profileWidgetBuilds`: **one `Scaffold` rebuild per
+rendered frame** — 23 in 23 on the first measurement, 17 in 17 when the
+before/after pair was re-run at the end. Not "frequently": every frame.
 
 Everything inside that scope was identical between frames except two things,
 both threshold comparisons on the offset: `elevation: offset > 4 ? 2 : 0` and
@@ -477,11 +477,18 @@ its widget-build signature (`PreferredSize` absent, `Scaffold` rebuilding).
 
 | | control | fixed |
 |---|---|---|
-| frames in the window | 79 | 86 |
-| `Scaffold` builds | 14 | **0** |
-| `Obx` builds | 14 | 2 |
-| `AppBar` builds | 14 | 2 |
-| `DealCard` builds | 50 | 1 |
+| frames in the window | 17 | 25 |
+| `Scaffold` builds | **17** — one per frame | **0** |
+| `Obx` builds | 17 | 1 |
+| `AppBar` builds | 17 | 2 |
+| `DealCard` builds | 56 | 1 |
+
+Re-measured on the shipped build from a known scroll position, reached by
+swiping back to the top rather than tapping the FAB — two earlier attempts at
+this comparison were thrown away because a blind tap at the button's
+coordinates, with no button there, opened a deal page, and a third because the
+list was parked at the end of the feed and the "scroll" was an overscroll
+bounce. Both produce plausible-looking numbers for the wrong screen.
 
 *Frame cost, three scripted swipes per side, tracking off so the measurement is
 free-running (medians):*
