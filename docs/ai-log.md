@@ -659,3 +659,67 @@ read `00:01` while its own expiry has already fired.
 
 Writing a lesson down is not the same as having somewhere it gets applied. The
 note that would have caught this was one file away, in a test I wrote myself.
+
+### 2026-09-13 · F-1 (the same clock lesson, a third time)
+**Suggested:** The entry above this one closes with "both widgets read the time
+from `ClockService` rather than calling `DateTime.now()`". `addToCart` did not.
+Its expiry guard, written in the same sitting, kept `DateTime.now()`.
+
+**Why it was wrong:** `ClockService` lags the wall clock by up to one tick, so
+between real expiry and the next tick the card still renders a live countdown
+over an enabled button while this guard rejects the tap with "Flash sale ended".
+That is exactly the badge/bag disagreement the shared clock exists to remove,
+reintroduced in the one place that decides whether the tap does anything. The
+comment I wrote above it even asserted the two could not drift "because both ask
+the deal itself" — they ask the same deal on different clocks.
+
+**How it was caught:** A code review pass over the F-1 range. Not by a test: the
+window is under a second and every test drives the published clock directly, so
+nothing in the suite could have opened a gap between the two.
+
+**Done instead:** `cartService.clock.now` (`6d04d75`). The narrower lesson is
+that "we moved off `DateTime.now()`" is a claim about a set of call sites, and I
+checked the two I had just written instead of grepping for the rest.
+
+### 2026-09-13 · F-1 (asserting enforcement that was not there)
+**Suggested:** A comment in `addToCart` and an edge case in `solutions.md` both
+said the expired-deal rule was restated "where the bag is actually written, so a
+second caller cannot get round it".
+
+**Why it was wrong:** `CartService.add` has no expiry check. The guard exists
+once, in the controller, and `CartScreen`'s "+" button calls `cart.add` directly
+and passes none of it. The documented defence-in-depth did not exist. Worse, the
+true design was already recorded one line away — the test at
+`cart_flash_expiry_test.dart:75` deliberately adds an expired deal and asserts
+the *sweep* removes it, which is the actual enforcement.
+
+**How it was caught:** Review, then `grep -rn "cart.*\.add("` — two call sites,
+one guarded.
+
+**Done instead:** The wording now says which mechanism is the guarantee (the
+tick sweep) and which is a courtesy (the controller check), and names the "+"
+bypass with its bound — at most one tick. The guard stayed in the controller
+rather than moving into `add`, because the service accepting anything and
+sweeping on the clock is the design the tests document. A NO MAGIC failure of
+the quiet kind: nothing invented, just a second lock described where there was
+one lock.
+
+### 2026-09-13 · F-1 (measuring only the state I had thought about)
+**Suggested:** "Zero rebuilds per second unless the sale ends", evidenced by a
+profile-mode capture on device — four countdowns, twenty `Text` builds over five
+ticks, zero `DealCard` builds.
+
+**Why it was insufficient:** All four countdowns were live. The flash rail, unlike
+`DealCard`, left `FlashSaleCountdown` mounted after expiry and only recoloured
+it, so every expired rail tile rebuilt `Text('Expired')` once a second, forever.
+The measurement was real and the claim it supported was false for a state the
+run never entered.
+
+**How it was caught:** Review, by comparing the two surfaces rather than reading
+either one on its own — `deal_card.dart` has `if (!expired)`, the rail did not.
+
+**Done instead:** The rail renders a plain `Text` once expired (`13aa735`), and
+two tests assert no `FlashSaleCountdown` survives the crossing on either
+surface; both fail against the old rail. `solutions.md` now says out loud that
+the device run had no expired tile in it. Evidence that covers the state you
+were thinking about is not evidence for the general claim.

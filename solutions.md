@@ -1487,7 +1487,11 @@ reactively would rebuild, in full, every second, to produce an identical card �
 which is the thing the feature explicitly rules out. `ExpiryBuilder` consumes
 the tick with a listener instead and calls `setState` only on the crossing:
 one subscription per visible card, zero rebuilds per second, one rebuild when
-the sale ends.
+the sale ends. That holds only if the countdown comes back out at the crossing,
+which is a thing each surface has to do for itself: the flash rail kept its
+`FlashSaleCountdown` mounted and merely recoloured it, so every *expired* rail
+tile went on rebuilding `Text('Expired')` once a second. Found in review, fixed
+in `13aa735`, and now asserted for both surfaces.
 
 *The bag is not a card's business.* An expired deal has to leave the bag whether
 or not any card for it exists — the user may be on the map. `CartService`
@@ -1521,10 +1525,31 @@ object, and the first careless edit collapses them.
   this a scrolled-past card could keep a neighbour's deadline.
 - *A line in the bag with quantity above one.* The whole line goes, and
   `itemCount` follows.
-- *A deal added after its sale ended.* The details screen blocks it and
-  `addToCart` blocks it again where the bag is actually written, but if one ever
-  got through, the bag drops it on the next tick. Covered by a test, because the
-  bag has to be right independently of the screen.
+- *A deal added after its sale ended.* The enforcement is the sweep, not the
+  write. `CartService.add` accepts any deal; what guarantees no expired flash
+  line survives is `_dropEndedFlashSales` on the next tick. The check in
+  `addToCart` is a courtesy that saves the user a tap that would be undone a
+  second later — it is not a second gate, and the "+" button on the bag screen
+  (`cart_screen.dart:75`) calls `add` directly and passes none of it. So an
+  expired line can still be incremented, for at most one tick, before the whole
+  line leaves. Covered by a test, because the bag has to be right independently
+  of every screen that writes to it. (An earlier draft of this line claimed the
+  rule was restated "where the bag is actually written". It was not — logged in
+  `docs/ai-log.md`.)
+- **Not handled, deliberately:** a sweep landing during an in-flight checkout.
+  `CartController.checkout` snapshots `items` before awaiting
+  (`cart_controller.dart:20`), so the order that goes to the server is correct.
+  But the tick mutates `items` underneath it and both of `CartScreen`'s `Obx`
+  scopes read the live list: the body flips to "Your bag is empty" and the
+  `bottomNavigationBar` returns `SizedBox.shrink()`, so the Checkout button and
+  its spinner vanish mid-request and the user is shown a removal notice followed
+  by "Order confirmed". Every client-side fix couples the service to the
+  controller — a `suspendSweep` flag on the bag, or the bag reading
+  `isCheckingOut` — which inverts the dependency to cover a window of a few
+  hundred milliseconds. The real answer is F-3's: the bag holds no server-side
+  reservation, so nothing here knows the line has been accepted. Given a hold,
+  the sweep would have something authoritative to consult instead of the clock.
+  Recorded rather than patched.
 - **Not handled, and it is the backend's doing:** `flashSaleEndsAt` is computed
   at serialisation time (`fake_api_service.dart:285`), so every `/deals` and
   `/deals/flash` response restarts the clock. Pull to refresh and a countdown at
@@ -1541,14 +1566,17 @@ object, and the first careless edit collapses them.
 **Evidence** Three kinds, because the feature asks for a property rather than a
 number.
 
-*The property, asserted directly* — `test/flash_sale_countdown_test.dart`, ten
-cases. The catalog carries only **14** flash deals out of 122 (8, 15, 25, 40, 55
+*The property, asserted directly* — `test/flash_sale_countdown_test.dart`,
+thirteen cases. The catalog carries only **14** flash deals out of 122 (8, 15, 25, 40, 55
 and 75 minutes, spread over pages 1, 2, 3, 5 and 6) and `assets/data` is not
 editable, so the "100+ visible countdowns" case cannot be produced on device.
 The test builds it: 120 live countdowns, ten ticks, and assertions that the
 enclosing list rebuilt **once** and **no card rebuilt at all** while every
 displayed number changed. A second case takes thirty cards with one about to
-expire and checks that only that one rebuilds.
+expire and checks that only that one rebuilds. Two more cover the state the
+device run never reached — a tile whose sale has *already* ended — by asserting
+that no `FlashSaleCountdown` is left mounted in either the feed card or the
+rail; both fail against the rail as it stood before `13aa735`.
 
 *The same property, measured on device* — Huawei P30 Pro, profile build,
 `ext.flutter.profileWidgetBuilds`. Sitting on the home feed, touching nothing,
@@ -1564,7 +1592,9 @@ for five seconds:
 | `Scaffold` | **0** |
 | `ListView` | **0** |
 
-Four countdowns were visible — the flash rail plus the feed's flash cards — so
+Four countdowns were visible, all of them live — the flash rail plus the feed's
+flash cards. No expired tile was on screen during this run, which is why the
+rail's expired-state leak did not show up in it. So
 twenty `Text` builds across five ticks is one per countdown per second, and
 nothing above them moved. `FlashSaleCountdown` itself reports zero builds
 because only its inner `Obx` rebuilds, which is the point.
