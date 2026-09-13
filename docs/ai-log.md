@@ -51,6 +51,8 @@ rather than remembered.
 | 2026-09-13 | 15:40 | 18:00 | RES-104 investigation, scripted-ordering tests, ablation, failed device repro, write-up |
 | 2026-09-13 | 18:00 | 19:30 | RES-104 review round: footer hang, harness traps, doc corrections |
 | 2026-09-13 | 19:30 | 21:00 | RES-101 repro, design comparison, fix, ablation, device verification, write-up |
+| 2026-09-13 | 21:00 | 22:10 | RES-101 review round; F-1 ticker, widgets, tests, three surfaces, bag expiry |
+| 2026-09-13 | 22:10 | 23:00 | F-1 device run (8-minute wait), scroll A/B, F-1 and F-3 write-ups |
 
 ---
 

@@ -1901,12 +1901,38 @@ path to the same answer rather than a copy of the implementation.
 
 ## Time spent
 
-Running log in [`docs/ai-log.md`](docs/ai-log.md).
+Running log in [`docs/ai-log.md`](docs/ai-log.md), recorded as the work happened
+rather than reconstructed.
 
 | Date | Span | On |
 |---|---|---|
-| 2026-09-12 | ~16:10– | Orientation, environment verification, baselines, scaffolding |
+| 2026-09-12 | 16:10–17:50 | Orientation, environment, baselines, RES-107 |
+| 2026-09-12 | 19:40–23:15 | RES-106/103/102, code review round, RES-105 baselines on two devices |
+| 2026-09-13 | 23:15–03:40 | RES-105 fixes, per-cause attribution, refresh-rate isolation, review follow-ups |
+| 2026-09-13 | 15:40–19:30 | RES-104 and RES-101, with their review rounds |
+| 2026-09-13 | 19:30–23:00 | F-1 end to end; F-3 decision |
 
-**Total so far** — ~0.3 h
+**Total** — roughly **16 hours**, of which a sizeable fraction was measurement
+and re-measurement rather than typing code: five of the seven bug fixes have a
+negative control, and several have an ablation per guard.
 
-**With one more day** — *(to be written at the end, honestly)*
+**What one more day would go to, in order**
+
+1. **F-2.** The most self-contained of the three features and the one whose
+   pieces are already sitting there — `visibility_detector` is in `pubspec.yaml`
+   and unused, `AnalyticsService` and `sendAnalyticsBatch` both exist. The
+   substance is in the conditions, not the plumbing: 50 % visible for one
+   *continuous* second means a per-card timer that has to be cancelled on
+   scroll-away, which is RES-102's shape with a hundred instances; the
+   once-per-deal-per-session set has to live on a service, not a screen, to
+   survive navigation; and "10 events **or** 15 seconds since the first unsent
+   one" is not a periodic flush.
+2. **F-3, implemented** to the decision already written above.
+3. **The stale `quantityLeft` finding**, which is one line and currently kept
+   out because it belongs to F-3's subject.
+4. **The footer state left spinning** when a load is suppressed by a guard, and
+   the missing error handling on `refreshDeals` — both logged, both small, both
+   deliberately out of their tickets' scope.
+5. **A second slow device.** Every performance figure here comes from one
+   2018 handset. The RES-105 numbers would be worth more with a second point on
+   the curve.
