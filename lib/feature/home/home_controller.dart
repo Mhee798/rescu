@@ -31,6 +31,12 @@ class HomeController extends GetxController {
   int _page = 1;
   int _totalPages = 1;
   bool _isFetchingMore = false;
+  bool _isRefreshing = false;
+
+  /// Incremented whenever a refresh replaces the feed. Both writers capture it
+  /// before awaiting and compare it after, so a response that belongs to a list
+  /// the user has already replaced is discarded instead of being written.
+  int _generation = 0;
 
   bool get hasMore => _page < _totalPages;
 
@@ -66,28 +72,49 @@ class HomeController extends GetxController {
   }
 
   Future<void> refreshDeals() async {
-    _page = 1;
-    final res = await dealRepo.fetchDeals(page: 1);
-    _totalPages = res.totalPages;
-    deals.assignAll(res.items);
-    refreshController.refreshCompleted();
+    final generation = ++_generation;
+    _isRefreshing = true;
+    try {
+      final res = await dealRepo.fetchDeals(page: 1);
+      // A newer refresh started while this one was in flight, so this response
+      // describes a list that no longer exists. The newer one owns the screen
+      // and will complete the header.
+      if (generation != _generation) return;
+      _page = 1;
+      _totalPages = res.totalPages;
+      deals.assignAll(res.items);
+      refreshController.refreshCompleted();
+    } finally {
+      if (generation == _generation) _isRefreshing = false;
+    }
   }
 
   Future<void> loadMore() async {
-    if (_isFetchingMore) return;
+    // A refresh in flight is about to redefine which page comes next, so there
+    // is no page worth asking for until it lands. Without this the request goes
+    // out against the pre-refresh `_page` and appends a page from the middle of
+    // the catalog to a list that has just been reset to its first page.
+    if (_isFetchingMore || _isRefreshing) return;
     if (!hasMore) {
       refreshController.loadNoData();
       return;
     }
     _isFetchingMore = true;
-    _page++;
+    final generation = _generation;
+    // The page number advances only once the response is in. Incrementing
+    // before the request meant a concurrent refresh could reset `_page` and
+    // leave the counter describing a list it no longer matches — which is this
+    // ticket — and it needed the `_page--` in the catch block to undo itself.
+    final requestedPage = _page + 1;
     try {
-      final res = await dealRepo.fetchDeals(page: _page);
-      _totalPages = res.totalPages;
-      deals.addAll(res.items);
+      final res = await dealRepo.fetchDeals(page: requestedPage);
+      if (generation == _generation) {
+        _page = requestedPage;
+        _totalPages = res.totalPages;
+        deals.addAll(res.items);
+      }
     } catch (e) {
       LogService.error('loadMore failed', e);
-      _page--;
     }
     _isFetchingMore = false;
     refreshController.loadComplete();
