@@ -1451,14 +1451,119 @@ Screenshots: `docs/res-107/06-deeplink-over-open-deal-fixed.png`,
 ## Part B — features
 
 ## F-1 · Live flash-sale countdowns
-**Status** not started
+**Status** complete — countdowns on all three surfaces, expiry handled through
+the bag, rebuild behaviour measured on device and pinned by tests.
 
-**Requirement** `mm:ss` / `hh:mm:ss` countdown in flash rail, feed cards and details; expiry disables the card and evicts it from the bag with a visible notice; per-second rebuilds scoped to the changing `Text` only, proven with Track Widget Builds.
+**What it had to do** Replace the static "Ends soon" badge with a live
+`mm:ss` / `hh:mm:ss` countdown on the flash rail, the feed cards and the
+details screen; switch an expired deal to a disabled state, refuse to add it to
+the bag, and remove it from the bag with a visible notice if it is already
+there; and keep the feed smooth with 100+ visible countdowns, with per-second
+rebuilds scoped to the text that changes — "not whole cards, not the whole
+list".
 
-**Design** —
-**Alternative rejected** —
-**Edge cases** —
-**Evidence** —
+**Design** The requirement is really two requirements with different rates, and
+almost all of the work is in keeping them apart.
+
+*The text changes every second.* `ClockService` publishes the second once, for
+the whole app. `FlashSaleCountdown` wraps an `Obx` around its `Text` and nothing
+else. One `Timer` per countdown was the obvious alternative and is wrong twice
+over: it puts one timer per visible card, each on its own phase, so adjacent
+cards tick at visibly different moments and the feed wakes many times a second
+instead of once — and it is the exact shape that produced RES-102, a timer owned
+by a widget that forgets to cancel it.
+
+*Expiry changes once.* This cannot be an `Obx` at all, and that is the part
+worth stating: `Obx` rebuilds whenever the observable it read notifies, whether
+or not the value the scope *derives* changed. A card asking "am I expired?"
+reactively would rebuild, in full, every second, to produce an identical card —
+which is the thing the feature explicitly rules out. `ExpiryBuilder` consumes
+the tick with a listener instead and calls `setState` only on the crossing:
+one subscription per visible card, zero rebuilds per second, one rebuild when
+the sale ends.
+
+*The bag is not a card's business.* An expired deal has to leave the bag whether
+or not any card for it exists — the user may be on the map. `CartService`
+subscribes to the same clock, which is also why the badge and the bag cannot
+disagree about when a sale ended.
+
+**Alternative rejected** *A `Timer` inside each countdown widget.* Covered
+above: per-card timers, unsynchronised ticks, and RES-102's failure mode
+reintroduced 100 times over.
+
+*Letting `CartService` call `Get.snackbar` itself.* This is what I wrote first.
+It ties the bag to a mounted UI, and a unit test of the bag said so in the
+bluntest way available — `Null check operator used on a null value` inside
+`SnackbarController._configureOverlay`. The service now publishes a
+`CartRemovalNotice` and `CartNoticeHost`, mounted once above the navigator
+through `GetMaterialApp`'s `builder`, shows it. The bag no longer needs a
+screen to be correct, and the notice reaches the user wherever they are.
+
+*Deriving expiry inside the countdown widget and having the card read it back.*
+Fewer widgets, but it makes the per-second scope and the per-sale scope the same
+object, and the first careless edit collapses them.
+
+**Edge cases**
+- *A deal that is not a flash sale.* `ExpiryBuilder` takes no subscription at
+  all and calls its builder once. Every `DealCard` is wrapped, so this is the
+  common path, not the exception.
+- *A card built after the sale already ended.* Starts expired, takes no
+  subscription, and fires no crossing callback — there was no crossing to see.
+- *A recycled list item arriving with a different deal.* `didUpdateWidget`
+  recomputes and resubscribes. `ListView.builder` reuses elements, so without
+  this a scrolled-past card could keep a neighbour's deadline.
+- *A line in the bag with quantity above one.* The whole line goes, and
+  `itemCount` follows.
+- *A deal added after its sale ended.* The details screen blocks it and
+  `addToCart` blocks it again where the bag is actually written, but if one ever
+  got through, the bag drops it on the next tick. Covered by a test, because the
+  bag has to be right independently of the screen.
+- **Not handled, and it is the backend's doing:** `flashSaleEndsAt` is computed
+  at serialisation time (`fake_api_service.dart:285`), so every `/deals` and
+  `/deals/flash` response restarts the clock. Pull to refresh and a countdown at
+  `00:12` jumps back to `07:59`. Nothing on the client can fix that — the server
+  never sends a stable deadline — and pinning the first value we saw would make
+  the app disagree with the server about what is still on sale. Recorded because
+  it is the first thing that looks like a bug in this feature and is not one.
+- **Not handled, deliberately:** the ticker runs for the life of the app rather
+  than only while a countdown is on screen. It is one callback per second that
+  assigns a `DateTime`; `Obx` scopes only subscribe while mounted, so a screen
+  with no countdowns costs nothing beyond that. Gating it on a listener count
+  would add state to a service to save an assignment.
+
+**Evidence** Three kinds, because the feature asks for a property rather than a
+number.
+
+*The property, asserted directly* — `test/flash_sale_countdown_test.dart`, ten
+cases. The catalog carries only **14** flash deals out of 122 (8, 15, 25, 40, 55
+and 75 minutes, spread over pages 1, 2, 3, 5 and 6) and `assets/data` is not
+editable, so the "100+ visible countdowns" case cannot be produced on device.
+The test builds it: 120 live countdowns, ten ticks, and assertions that the
+enclosing list rebuilt **once** and **no card rebuilt at all** while every
+displayed number changed. A second case takes thirty cards with one about to
+expire and checks that only that one rebuilds.
+
+*The same property, measured on device* — Huawei P30 Pro, profile build,
+`ext.flutter.profileWidgetBuilds`. Sitting on the home feed, touching nothing,
+for five seconds:
+
+| widget | builds in 5 s |
+|---|---|
+| `Animator::BeginFrame` | 5 |
+| `Obx` | **20** |
+| `Text` | **20** |
+| `DealCard` | **0** |
+| `Card` | **0** |
+| `Scaffold` | **0** |
+| `ListView` | **0** |
+
+Four countdowns were visible — the flash rail plus the feed's flash cards — so
+twenty `Text` builds across five ticks is one per countdown per second, and
+nothing above them moved. `FlashSaleCountdown` itself reports zero builds
+because only its inner `Obx` rebuilds, which is the point.
+
+*Behaviour, on device* — the details screen for deal 5 renders
+`⚡ Flash sale ends in 07:40`, counting down.
 
 ## F-2 · Impression tracking
 **Status** not started
