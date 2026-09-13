@@ -521,3 +521,31 @@ The lesson that generalises: an early return is a claim that the work being
 skipped does not matter, and that claim needs its own assertion. The list was
 tested exhaustively for orderings and the one thing the user actually looks at
 was not tested at all.
+
+### 2026-09-13 · RES-101 (an API shape I asserted without opening the file)
+**Suggested:** Comparing designs for discarding stale search responses, I
+recommended matching on the query the response carries — "เทียบ `query` ที่
+response ถือกลับมากับคำล่าสุด ซึ่งอ่านง่ายกว่าเลขรุ่นและตรงกับความหมายจริง" —
+and argued it was more readable than the generation counter used for RES-104
+because it compares the thing that actually matters rather than a number.
+
+**Why it was wrong:** `searchDeals` returns `List<Map<String, dynamic>>` and
+nothing else (`fake_api_service.dart:95`); `DealRepo.search` maps it straight to
+`List<DealModel>`. There is no query in the response to compare against. The
+neighbouring `getDeals` *does* echo its `page`, which is probably where the
+assumption came from, and it is the difference between the two that makes the
+claim feel safe. CLAUDE.md's first working principle is NO MAGIC — "never invent
+APIs, fields, files, or behaviour... grep or read it first" — and this is
+exactly that, in a design recommendation rather than in code.
+
+**How it was caught:** The user asked what the API actually returns, one turn
+after the suggestion. I had not opened `searchDeals` before recommending a
+design built on its return shape; I had only read the latency lines above it
+while working out the timing.
+
+**Done instead:** The comparison has to be held client-side — capture the query
+in a local before awaiting and compare it against the latest one on the way
+back. Nothing was built on the wrong claim, so the cost was one turn. It is
+logged anyway because the failure is not the design, it is that I described a
+function's output while looking at a different part of the same function, and
+that the wrong version was the more persuasive one.
