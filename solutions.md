@@ -316,6 +316,13 @@ unguarded.
   before awaiting and compare after. A response whose generation no longer
   matches is discarded rather than written. That covers a stale load landing
   after a refresh, and a stale refresh landing after a newer one.
+
+  It is incremented when a refresh *starts*, not when one succeeds, so it is
+  stricter than "the user replaced the list": a refresh that is itself
+  superseded, or that fails, still invalidates an in-flight load whose page
+  would have been perfectly usable, and the user has to pull up again to get it.
+  That is the deliberate direction — the alternative is deciding after the fact
+  whether a list was replaced, which is the window this ticket is about.
 - **An `_isRefreshing` flag that `loadMore` respects.** The generation counter
   cannot help a load that *starts* during a refresh: it captures the current
   generation legitimately, but reads a pre-refresh page number, and would append
@@ -348,15 +355,36 @@ backend's 950 ms — to fix a defect they cannot see.
   cause, and an earlier note of mine in `docs/ai-log.md` described it as live;
   that is corrected there. The fix deletes the rollback rather than leaving it
   armed, and the test for it drives the failure through the scripted repo.
-- **Not handled, deliberately:** `loadMore` returning early still does not call
-  `refreshController.loadComplete()`, so a load suppressed by either flag leaves
-  the footer spinning until the next one completes it. That was true of the
-  existing `_isFetchingMore` guard before this change and is a footer-state bug
-  rather than a data bug; fixing it means deciding what the footer should show
-  while a refresh is in flight, which is beyond this ticket.
-- **Not handled:** `refreshDeals` still has no error handling, so a failed pull
-  becomes an unhandled async error. Already logged under "Findings logged, not
-  fixed"; unchanged here beyond keeping the new flag in a `finally`.
+- *A load suppressed by the refresh guard.* It calls
+  `refreshController.loadComplete()` before returning, and that is not symmetry
+  for its own sake. SmartRefresher puts the footer into `LoadStatus.loading`
+  before it calls `onLoading`, and only `loadComplete`/`loadNoData`/`loadFailed`
+  move it out; `refreshDeals` reaches `refreshCompleted()`, which touches the
+  header alone (`smart_refresher.dart:753`, whose `resetFooterState` defaults to
+  false and in any case only handles `noData`). A silent return would leave the
+  spinner up permanently, and `_dispatchModeByOffset` bails while the mode is
+  `loading` (`indicator_wrap.dart:466`), so no later pull-up could recover it.
+
+  The `_isFetchingMore` return next to it looks identical and needs nothing,
+  because the load that set that flag reaches `loadComplete()` itself. An
+  earlier revision of this section claimed the two were equivalent and that the
+  footer hang predated this change. Both halves were wrong: the new guard
+  introduced it, and it was the first thing in the suite that no assertion could
+  see, because every other case looks only at the list.
+- **Not handled, and inconsistent on its face:** `refreshDeals` has a `try` and
+  a `finally` but no `catch`, so a failed pull still escapes as an unhandled
+  async error and leaves the header spinning. The `finally` manages the new flag
+  and nothing else. That sits oddly beside deleting `_page--` on the grounds
+  that a latent path should not be left armed, and both paths are latent for the
+  same reason — `getDeals` cannot throw.
+
+  The difference, and it is the reason for treating them differently rather than
+  an excuse: removing `_page--` deletes code that is already present and already
+  wrong, and changes no behaviour that exists. Adding a `catch` to
+  `refreshDeals` *invents* behaviour — it means deciding whether the user sees
+  `refreshFailed()`, a retry, or a silent header reset, which is the content of
+  the separate finding logged under "Findings logged, not fixed". Doing that
+  here would be deciding an unrelated UX question inside a race-condition fix.
 
 **Evidence** `test/home_paging_test.dart` — seven cases driven by a `DealRepo`
 that hands out a `Completer` per request, so the test chooses which response
@@ -367,6 +395,15 @@ them on the duplicate-count assertion:
 refresh landing before an in-flight loadMore → got 60 items, 20 of them duplicates
 a failed page load …                        → got 40 items, 20 of them duplicates
 ```
+
+Two further cases assert on `RefreshController.footerStatus` rather than on the
+list, which is what a review had to point out: seven ordering tests had verified
+that the guards produce the right *list* and none of them looked at what the
+user's pull gesture was left staring at. Both need a frame scheduled explicitly
+— `loadComplete()` defers to a post-frame callback and `tester.pump()` produces
+no frame unless one is already pending, so without
+`tester.binding.scheduleFrame()` they would have reported the footer stuck
+whatever the code did.
 
 Each guard was then removed on its own to check it is load-bearing rather than
 decoration — this matters because the first round of ablation said only
