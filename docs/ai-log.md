@@ -47,6 +47,8 @@ rather than remembered.
 | 2026-09-12 | 21:40 | 22:09 | F1 deep-link-over-open-deal confirmation, per-id tag fix, seven-case device verification |
 | 2026-09-12 | 22:10 | 23:15 | Peer review round on the tag fix; RES-105 investigation and baselines on two devices |
 | 2026-09-13 | 23:15 | 02:10 | RES-105 fixes, per-cause attribution, refresh-rate isolation, fling before/after, review round |
+| 2026-09-13 | 02:10 | 03:40 | RES-105 review follow-ups, re-verification of every figure on the shipped build |
+| 2026-09-13 | 15:40 | 18:00 | RES-104 investigation, scripted-ordering tests, ablation, failed device repro, write-up |
 
 ---
 
