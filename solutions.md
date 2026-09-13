@@ -1576,19 +1576,92 @@ because only its inner `Obx` rebuilds, which is the point.
 **Evidence** —
 
 ## F-3 · Stock reservations with optimistic UI
-**Status** not started
+**Status** not implemented — deliberately. The decision the task singles out is
+made and justified below, which is the part it says is read as carefully as the
+code.
 
-**Requirement** Optimistic add with rollback on failure, per-line remaining hold, release/adjust on removal, reservation ids at checkout, graceful `410`.
+**Why it is not implemented.** The grading notes say *"a complete, profiled F-1
+beats three half-done features"*, and F-3 is the largest of the three: it
+touches `CartService`, which is session-long and now also owns flash-sale
+expiry, plus checkout, plus a new per-line timer, plus rollback on a 409 that
+the backend fires on roughly every fifth call. Started with the time left, it
+would have been the half-done one. What is written here is the decision, not an
+apology for missing code — and the plumbing it would sit on already exists:
+`ReservationModel` with `isExpired`, `CartItemModel.reservation`, and
+`OrderRepo.reserve` / `releaseReservation` / `checkout` already passing
+`reservationId`.
 
-**Deliberately underspecified — expiry while the user is in the app.** Options
-will be laid out with a recommendation rather than one being chosen silently.
+### The underspecified question: a hold that lapses while the user is still here
 
-**Design** —
-**Alternative rejected** —
-**Edge cases** —
-**Evidence** —
+Four behaviours, and the argument that picks between them.
 
----
+**A · Renew the hold silently before it lapses.** The bag always works and the
+user never learns the word "reservation". Rejected, and it is the one I think
+the task is watching for: a hold that renews itself is not a hold. It lets one
+idle bag deny the last portion to everyone else indefinitely, which is the
+unfairness reservations exist to remove — the ticket opens by describing exactly
+that failure at pickup. It can also fail with a 409 on renewal, so it does not
+even remove the conversation; it postpones it to a worse moment and with less
+context. A bounded variant — renew only while the bag is on screen, at most
+twice — was considered and rejected too: it keeps the hoarding, adds two rules
+the user cannot see, and still ends in the same message.
+
+**B · Let it lapse quietly and let checkout return 410.** Simplest, no timers.
+Rejected because it reproduces the ticket's own complaint one step earlier: the
+user finds out at the moment of commitment instead of at pickup. Moving a bad
+surprise from the shop counter to the pay button is not fixing it.
+
+**C · Let it lapse, keep the line, mark it as needing a new hold. ← chosen**
+The line stays in the bag, greyed, reading *"Hold expired — tap to hold again"*,
+and checkout refuses while any line is in that state, naming them. Re-holding is
+one tap and either succeeds or says the stock has gone.
+
+The reason is that **the hold expired, not the deal**. The stock is very likely
+still there; what ran out is our claim on it. Deleting the line throws away the
+user's intent over an internal bookkeeping event they did not cause and cannot
+see. Keeping it and being honest about its state costs one extra UI state and
+keeps every option open: re-hold, remove, or checkout the rest.
+
+**D · Remove the line automatically, as F-1 does when a flash sale ends.**
+Rejected, and the contrast with F-1 is the whole point. In F-1 the *deal* ends:
+there is nothing left to buy, so removing it is the only honest thing and the
+notice explains it. Here the *hold* ends and the deal is still on sale. The same
+gesture means opposite things, and applying F-1's rule here would teach the user
+that items vanish from their bag for reasons they cannot predict.
+
+That the two features would otherwise collide in the same screen is why this
+decision has to be made once rather than per feature. F-1 removes; F-3 marks.
+The rule that distinguishes them, and the one I would write on the wall: **the
+bag may remove a line only when the thing itself is gone. Everything else is a
+state on the line.**
+
+### Mid-checkout
+
+If a hold lapses while `checkout` is in flight, the server answers 410. The bag
+is restored exactly as it was, the offending line is marked as in C, and the
+message names it: *"The hold on Mystery Thai Feast expired. Nothing was
+charged."*
+
+Explicitly **not** automatic: re-reserving and retrying the checkout. A retry of
+a payment-adjacent call that the user did not ask for is the kind of helpfulness
+that produces double charges, and the backend already shows how little it takes
+— `checkout` throws a 502 on roughly every fifth call, so a blind retry loop has
+a ready-made way to misbehave. The user re-presses a button; the app does not
+decide to pay twice on their behalf.
+
+### What the implementation would look like
+
+- Adding to the bag inserts the line immediately and fires `reserve` behind it.
+  On a 409 the line is rolled back out with a plain message — *"Someone else got
+  the last one"* — not the 409.
+- Each line shows its hold's remaining time, driven by the same `ClockService`
+  F-1 introduced, through the same split: the per-second text in an `Obx`, the
+  lapse in an `ExpiryBuilder`-shaped listener.
+- Reducing a quantity re-reserves at the lower number; removing a line releases.
+  Both are fire-and-forget against the server and must not block the UI.
+- Checkout sends `reservationId` per line — `OrderRepo.checkout` already does —
+  and refuses locally while any line is lapsed, rather than letting the server
+  answer for it.
 
 ## Findings logged, not fixed
 
