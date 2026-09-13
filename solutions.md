@@ -446,12 +446,19 @@ and it makes the app's footprint worse on exactly the devices the ticket is
 about. The cache is not too small; the images are too large.
 
 **Edge cases**
-- *A slot taller than it is wide.* `BoxFit.cover` would then be bound by height,
-  and a width-only hint would decode too small and blur. `_decodeWidth` returns
-  null in that case rather than guessing. None of the three current call sites
-  hit it.
-- *Unbounded width.* Returns null; the flash rail and feed card both receive a
-  finite width from their parents, the details header from the flexible space.
+- *A slot narrower than the source's 4:3.* `BoxFit.cover` is then bound by
+  height, so `_decodeSize` hints the height instead of the width. This is the
+  live case, not a hypothetical: the 64×64 thumbnails in `cart_screen.dart:33`
+  and `orders_screen.dart:74` take it and decode 256×192.
+- *A dimension the widget does not know.* Each is read from the widget's own
+  field first and the incoming constraints second, because the feed card and
+  the flash rail sit in a `Column` and the height reaching the `LayoutBuilder`
+  is infinite. With a finite width and no usable height the box is treated as
+  width-bound, which is right: an unbounded parent lets the image size itself
+  to its own aspect.
+- *Neither dimension usable.* No hint, and the image decodes at the served
+  1600×1200. None of the five call sites reaches this, but it is the safe
+  direction — a missing hint costs memory, a wrong one costs sharpness.
 - **Not fixed, deliberately:** `visibleDeals` still builds a new `List` on every
   read. With the `Obx` scoped, it is read when `deals` or `todayOnly` changes
   rather than once per frame, which was the part that mattered. Memoising it
