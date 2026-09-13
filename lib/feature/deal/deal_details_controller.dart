@@ -139,6 +139,19 @@ class DealDetailsController extends GetxController {
   void addToCart() {
     final deal = _deal.value;
     if (deal == null) return;
+    // The button is already disabled by then; this is the same rule stated
+    // where the bag is actually written, so a second caller cannot get round
+    // it — and the two cannot drift, because both ask the deal itself.
+    final endsAt = deal.flashSaleEndsAt;
+    if (endsAt != null && !DateTime.now().isBefore(endsAt)) {
+      Get.snackbar(
+        'Flash sale ended',
+        '${deal.name} is no longer on flash sale.',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 2),
+      );
+      return;
+    }
     cartService.add(deal);
     Get.snackbar(
       'Added to bag',

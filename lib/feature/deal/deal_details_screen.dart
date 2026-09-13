@@ -3,6 +3,8 @@ import 'package:get/get.dart';
 
 import '../../app_config.dart';
 import '../../model/deal_model.dart';
+import '../shared_widget/expiry_builder.dart';
+import '../shared_widget/flash_sale_countdown.dart';
 import '../shared_widget/the_network_image.dart';
 import 'deal_details_controller.dart';
 
@@ -42,22 +44,30 @@ class DealDetailsScreen extends GetView<DealDetailsController> {
           child: Center(child: CircularProgressIndicator()),
         );
       }),
-      bottomSheet: Obx(
-        () => controller.deal == null
-            ? const SizedBox.shrink()
-            : Container(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                color: Colors.white,
-                child: SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: controller.addToCart,
-                    icon: const Icon(Icons.add_shopping_cart),
-                    label: const Text('Add to bag'),
-                  ),
-                ),
+      bottomSheet: Obx(() {
+        final deal = controller.deal;
+        if (deal == null) return const SizedBox.shrink();
+        return Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          color: Colors.white,
+          child: SizedBox(
+            width: double.infinity,
+            // The button has to go dead the moment the sale ends, and that is
+            // a once-per-deal event, so it listens for the crossing rather
+            // than rebuilding on every tick.
+            child: ExpiryBuilder(
+              endsAt: deal.flashSaleEndsAt,
+              builder: (context, expired) => FilledButton.icon(
+                onPressed: expired ? null : controller.addToCart,
+                icon: Icon(expired
+                    ? Icons.do_not_disturb_on_outlined
+                    : Icons.add_shopping_cart),
+                label: Text(expired ? 'Flash sale ended' : 'Add to bag'),
               ),
-      ),
+            ),
+          ),
+        );
+      }),
     );
   }
 }
@@ -154,6 +164,53 @@ class _DealBody extends StatelessWidget {
                 Text(deal.storeAddress,
                     style:
                         TextStyle(fontSize: 13, color: Colors.grey.shade500)),
+                if (deal.flashSaleEndsAt != null) ...[
+                  const SizedBox(height: 12),
+                  ExpiryBuilder(
+                    endsAt: deal.flashSaleEndsAt,
+                    builder: (context, expired) => Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color:
+                            expired ? Colors.grey.shade200 : Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.bolt,
+                              size: 16,
+                              color: expired
+                                  ? Colors.grey.shade600
+                                  : Colors.red.shade700),
+                          const SizedBox(width: 4),
+                          Text(
+                            expired ? 'Flash sale ended' : 'Flash sale ends in',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: expired
+                                  ? Colors.grey.shade600
+                                  : Colors.red.shade700,
+                            ),
+                          ),
+                          if (!expired) ...[
+                            const SizedBox(width: 6),
+                            FlashSaleCountdown(
+                              endsAt: deal.flashSaleEndsAt!,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red.shade700,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 Row(
                   children: [
