@@ -175,7 +175,13 @@ void main() {
   testWidgets(
       'a load suppressed by another load leaves the footer to that load',
       (tester) async {
-    await seed();
+    // Not `seed()`: its `settle` awaits a zero-duration Future, which never
+    // resolves inside `testWidgets`'s FakeAsync without a pump, and the test
+    // hangs rather than failing.
+    await tester.pumpWidget(const SizedBox());
+    unawaited(controller.refreshDeals());
+    repo.completeNow(1);
+    await tester.pump();
 
     controller.refreshController.footerMode!.value = LoadStatus.loading;
     unawaited(controller.loadMore()); // this one owns the footer
