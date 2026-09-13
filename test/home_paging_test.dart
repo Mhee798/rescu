@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pull_to_refresh/pull_to_refresh.dart';
 import 'package:rescu/feature/home/home_controller.dart';
 import 'package:rescu/model/deal_model.dart';
 import 'package:rescu/model/paged_response_model.dart';
@@ -130,6 +132,63 @@ void main() {
     expectContiguousFeed(controller);
   });
 
+  /// `loadComplete()` defers to a post-frame callback, and `tester.pump()`
+  /// produces no frame unless one is already scheduled — with a static widget
+  /// tree nothing schedules one, so the callback would never run and both
+  /// cases below would report the footer stuck no matter what the code did.
+  Future<void> pumpAFrame(WidgetTester tester) async {
+    tester.binding.scheduleFrame();
+    await tester.pump();
+  }
+
+  // The list assertions above cannot see what the user's pull gesture is left
+  // looking at. A guard that returns early is only correct if everything it
+  // skipped is either unnecessary or done by someone else, and these two cases
+  // are what tells those apart. `testWidgets` because `loadComplete()` defers
+  // to a post-frame callback.
+  testWidgets('a load suppressed by an in-flight refresh releases the footer',
+      (tester) async {
+    // A frame has to be produced for `loadComplete()`'s post-frame callback to
+    // run, and the binding produces none until something is pumped.
+    await tester.pumpWidget(const SizedBox());
+    unawaited(controller.refreshDeals());
+    repo.completeNow(1);
+    await tester.pump();
+
+    // SmartRefresher puts the footer into `loading` before it calls onLoading.
+    controller.refreshController.footerMode!.value = LoadStatus.loading;
+    unawaited(controller.refreshDeals()); // the pull-down, still in flight
+    unawaited(controller.loadMore()); // and the footer fires
+    await pumpAFrame(tester);
+
+    expect(
+      controller.refreshController.footerStatus,
+      LoadStatus.idle,
+      reason: 'nothing else settles the footer — refreshDeals reaches only '
+          'refreshCompleted(), which touches the header — so a silent return '
+          'leaves the spinner up and kills pull-up for the session',
+    );
+    repo.completeNow(1);
+    await tester.pump();
+  });
+
+  testWidgets(
+      'a load suppressed by another load leaves the footer to that load',
+      (tester) async {
+    await seed();
+
+    controller.refreshController.footerMode!.value = LoadStatus.loading;
+    unawaited(controller.loadMore()); // this one owns the footer
+    unawaited(controller.loadMore()); // suppressed, and must not touch it
+    await pumpAFrame(tester);
+    expect(controller.refreshController.footerStatus, LoadStatus.loading);
+
+    repo.completeNow(2);
+    await pumpAFrame(tester);
+    expect(controller.refreshController.footerStatus, LoadStatus.idle,
+        reason: 'the in-flight load settles it on its way out');
+  });
+
   test('a stale refresh landing last does not overwrite the newer one',
       () async {
     await seed();
@@ -206,6 +265,16 @@ class ScriptedRepo extends DealRepo {
         const ApiException('boom', statusCode: 500), StackTrace.empty);
     if (queue.isEmpty) _pending.remove(page);
     await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Completes the oldest outstanding request for [page] without awaiting.
+  /// `testWidgets` runs inside `FakeAsync`, where `Future.delayed` does not
+  /// resolve on its own, so a widget test completes here and pumps instead.
+  void completeNow(int page) {
+    final queue = _pending[page];
+    expect(queue, isNotNull, reason: 'no request outstanding for page $page');
+    queue!.removeAt(0).complete(_response(page, _totalPages));
+    if (queue.isEmpty) _pending.remove(page);
   }
 
   /// Completes everything still outstanding, oldest page first.

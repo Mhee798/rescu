@@ -90,11 +90,25 @@ class HomeController extends GetxController {
   }
 
   Future<void> loadMore() async {
+    // Another load is already running; it will settle the footer itself when it
+    // finishes, so this return needs to do nothing.
+    if (_isFetchingMore) return;
     // A refresh in flight is about to redefine which page comes next, so there
     // is no page worth asking for until it lands. Without this the request goes
     // out against the pre-refresh `_page` and appends a page from the middle of
     // the catalog to a list that has just been reset to its first page.
-    if (_isFetchingMore || _isRefreshing) return;
+    //
+    // The `loadComplete()` is not symmetry for its own sake. SmartRefresher has
+    // already put the footer into `LoadStatus.loading` before calling this, and
+    // only `loadComplete`/`loadNoData`/`loadFailed` move it out — `refreshDeals`
+    // reaches `refreshCompleted()`, which touches the header only
+    // (`smart_refresher.dart:753`). Returning silently would leave the spinner
+    // up for good, and because `_dispatchModeByOffset` bails while the mode is
+    // `loading` (`indicator_wrap.dart:466`) no later pull-up could recover it.
+    if (_isRefreshing) {
+      refreshController.loadComplete();
+      return;
+    }
     if (!hasMore) {
       refreshController.loadNoData();
       return;
