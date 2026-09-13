@@ -49,6 +49,8 @@ rather than remembered.
 | 2026-09-13 | 23:15 | 02:10 | RES-105 fixes, per-cause attribution, refresh-rate isolation, fling before/after, review round |
 | 2026-09-13 | 02:10 | 03:40 | RES-105 review follow-ups, re-verification of every figure on the shipped build |
 | 2026-09-13 | 15:40 | 18:00 | RES-104 investigation, scripted-ordering tests, ablation, failed device repro, write-up |
+| 2026-09-13 | 18:00 | 19:30 | RES-104 review round: footer hang, harness traps, doc corrections |
+| 2026-09-13 | 19:30 | 21:00 | RES-101 repro, design comparison, fix, ablation, device verification, write-up |
 
 ---
 
@@ -549,3 +551,57 @@ back. Nothing was built on the wrong claim, so the cost was one turn. It is
 logged anyway because the failure is not the design, it is that I described a
 function's output while looking at a different part of the same function, and
 that the wrong version was the more persuasive one.
+
+
+### 2026-09-13 · RES-101 (a harness too slow to show the bug)
+**Suggested:** To reproduce the search race on device I typed "sushi" with
+`adb shell "input text s; input text u; ..."`. The log came back in the order
+the letters were typed — `q=s` finishing first, `q=sushi` last — which is the
+*correct* ordering, and the screen showed the right results. Read at face value
+that is "does not reproduce".
+
+**Why it was wrong:** Each `input text` invocation costs about 300 ms on this
+device, so the five requests were issued 1.2 s apart. The whole defect lives in
+a window of a few hundred milliseconds: `q=s` takes 1100-1399 ms and `q=sushi`
+takes 180-479 ms, so they only invert if the keystrokes are close together. The
+harness was typing more slowly than a person can, and slowly enough to hide the
+thing it was built to show.
+
+**How it was caught:** Comparing the measured completion times against the
+latency formula before writing anything down. The gap between the first and last
+request was larger than the difference in their service times, which cannot
+produce an inversion — so the result was a property of my typing, not of the
+app.
+
+**Done instead:** `adb shell input keyevent 47 49 47 36 37` — all five key
+events in one process. The very next run inverted: `sush`, `sushi`, `sus`, `su`,
+`s` at 320, 442, 555, 1001 and 1238 ms, with the box reading "sushi" and the
+screen showing a match for "s". Written into `solutions.md` as part of the repro
+steps, because the slow version produces a confident false negative and the
+difference between the two is one flag.
+
+### 2026-09-13 · RES-101 (reaching for the tool that worked last time)
+**Suggested:** Having just finished RES-104 with a generation counter, I offered
+it as the fix here too, then switched to comparing the query text on the grounds
+that it reads better — arriving at both by analogy rather than by testing.
+
+**Why it was insufficient:** The query-text version is wrong in a way that reads
+as right. Type "sushi", backspace to "sush", type "i": two in-flight requests
+now carry the same text, the guard lets both through, and the older one can land
+last. Their payloads are not interchangeable, because `checkout` mutates
+`quantityLeft` on the shared deal maps (`fake_api_service.dart:196`). The
+counter would have handled it, but it has to be incremented and remembered in
+the cleared-box branch, and it names nothing.
+
+**How it was caught:** The user asked whether the query version could miss the
+latest result by a fraction of a second. That is exactly the A-B-A case, and it
+had not occurred to me while arguing that the text comparison was the more
+readable option.
+
+**Done instead:** The `Future` itself as the token, compared with `identical()`
+— unique per request like a counter, and meaningful like the text. The
+disagreement was then made falsifiable rather than argued: the query-text
+variant was built, compiles, passes four of five cases and fails the A-B-A one
+with `Expected: <3> Actual: <1>`. That case exists in the suite specifically to
+keep the design decision testable. Both rejected options are in `solutions.md`
+with that reasoning.
