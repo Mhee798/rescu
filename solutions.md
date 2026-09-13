@@ -1827,14 +1827,84 @@ See RES-106 Edge cases. Out of bounds — the cause is in `fake_api_service.dart
 
 ## AI usage log
 
-Full running log: [`docs/ai-log.md`](docs/ai-log.md), appended to during the work.
-The two strongest entries get lifted here once they exist.
+Full running log: [`docs/ai-log.md`](docs/ai-log.md) — twenty-four entries,
+appended to as the work happened rather than reconstructed at the end. The two
+that cost the most time are lifted below in full.
 
-**Tools used** — Claude Code (Opus 5) in the terminal, driving the repo and the
-live device.
+**Tools used** — Claude Code (Opus 5) in the terminal, with access to the repo,
+to `adb`, and to the VM Service on a live device. One tool, used for everything:
+reading the framework and package sources rather than recalling them, driving
+the profiling on device, writing the tests, and drafting these documents. No
+Copilot, no editor completion.
 
-*(No entries yet — nothing has been suggested and rejected so far beyond
-ordering decisions.)*
+**How it was used, honestly** — the useful part was never the code. Every fix
+here is small; what took the time was establishing that a cause was *the* cause,
+and the failure mode that recurs in the log below is the model producing a
+confident, plausible, well-written claim that nothing had checked. Twenty-four
+entries in `docs/ai-log.md` are that shape. The countermeasure that worked was
+mechanical rather than attitudinal: a negative control for every fix (does the
+test fail against the unfixed code, in the real widget tree?), an ablation per
+guard, and `grep` instead of memory for any claim about a set of call sites.
+
+### The two that cost the most
+
+**1. A fix that was correct about the framework and irrelevant to the app —
+with a passing test that agreed with it.** (RES-105, the scroll-to-top FAB.)
+
+Narrowing the `Obx` around the FAB lost its scale-in animation. Reading
+`_FloatingActionButtonTransition.didUpdateWidget` (`scaffold.dart:1368`) turned
+up an early return when the old and new children's keys compare equal, so the
+two branches got distinct `ValueKey`s — and because §4 of our own working
+agreement forbids reporting a fix from source reading alone, a test was written
+to prove it. It passed, with a control case. The item was reported closed.
+
+The keys change nothing. `didUpdateWidget` runs when the **`Scaffold`** rebuilds;
+an `Obx` rebuilds itself and never its parent, so that method is unreachable
+from this screen. The button had been popping in at full size the whole time,
+before and after. The test passed because it toggled the branch with
+`pumpWidget`, which rebuilds the `Scaffold` and therefore *does* reach
+`didUpdateWidget` — it asserted a true property of `Scaffold` that the app never
+exercises. The control passed too, because both cases measured the same
+irrelevant path.
+
+Caught by a code review that reproduced the *production* shape in a probe
+instead of re-reading the diff: `Scaffold(floatingActionButton: Obx(...))`, flip
+the `Rx`, pump — scale reads 1.0 before, immediately after, and 380 ms later.
+Replaced with `AnimatedScale` inside the `Obx` (plus `IgnorePointer`, since a
+zero-scale `Transform` keeps its layout slot and stays tappable), and the test
+now mounts the shape that ships and drives it through the `Rx`.
+
+The lesson is not "write a test" — a test was written. It is that a test built
+from the same mental model as the fix inherits the fix's error, and that a
+control only guards against the failure it was aimed at.
+
+**2. A measurement that contained none of the thing being measured — and agreed
+with what I expected.** (RES-105, cross-device profiling.)
+
+After capturing dropped frames on a 2018 handset by having a person flick the
+device, the identical procedure on a 2024 flagship reported `Animator::BeginFrame`
+**0 frames over budget at a steady 121 fps**. The reading about to be written was
+"the flagship absorbs it completely" — which was also the expected answer.
+
+The window contained almost no work: `BUILD` totalled **28 ms** across six
+seconds, against **730 ms** for the same gesture on the other device. At 120 Hz
+the fling clears the 122-card feed in about a second and the VM timeline's ring
+buffer keeps only the last few seconds, so what was captured was the overscroll
+bounce at the bottom of the list — a screen doing nothing. "Zero dropped frames"
+was true of a static screen.
+
+Caught by checking the `BUILD` total before reading anything else, then
+confirmed rather than assumed: a scripted swipe while parked at the bottom gives
+0.041 ms of `BUILD` per frame; the same swipe from the top gives 1.216 ms. All
+cross-device comparison moved to scripted swipes from a known scroll position
+with the feed loaded to the same depth.
+
+A quiet result needs the same scrutiny as a loud one — and more when it happens
+to confirm what you already believed. A later entry in the log is the same
+mistake in the opposite direction: a single sample per device supporting the
+claim "`BUILD` is identical, so the flagship is somehow worse", struck through
+in place in `docs/res-105/baseline.md` and corrected to 2.682 ms vs 1.135 ms
+after re-measuring.
 
 ---
 
@@ -1965,11 +2035,11 @@ rather than reconstructed.
 |---|---|---|
 | 2026-09-12 | 16:10–17:50 | Orientation, environment, baselines, RES-107 |
 | 2026-09-12 | 19:40–23:15 | RES-106/103/102, code review round, RES-105 baselines on two devices |
-| 2026-09-13 | 23:15–03:40 | RES-105 fixes, per-cause attribution, refresh-rate isolation, review follow-ups |
+| 2026-09-12→13 | 23:15–03:40 | RES-105 fixes, per-cause attribution, refresh-rate isolation, review follow-ups |
 | 2026-09-13 | 15:40–19:30 | RES-104 and RES-101, with their review rounds |
-| 2026-09-13 | 19:30–23:00 | F-1 end to end; F-3 decision |
+| 2026-09-13 | 19:30–22:45 | F-1 end to end; F-3 decision; F-1 review round and its fixes |
 
-**Total** — roughly **16 hours**, of which a sizeable fraction was measurement
+**Total** — roughly **17 hours**, of which a sizeable fraction was measurement
 and re-measurement rather than typing code: five of the seven bug fixes have a
 negative control, and several have an ablation per guard.
 
