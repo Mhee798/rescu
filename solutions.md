@@ -59,8 +59,11 @@ So the first keystroke's request — the slowest — lands last and wins. The
 comment in the API file calls this out as deliberate: *"like most real backends,
 broad queries are slower than specific ones"*.
 
-Measured on device before any change, typing "sushi" as a single
-`adb shell input keyevent 47 49 47 36 37` burst:
+The formula predicts 1180-1480 ms for "s" and 180-480 ms for "sushi". Measured
+on device before any change, typing "sushi" as a single
+`adb shell input keyevent 47 49 47 36 37` burst — the prediction and the
+measurement are independent, which is what makes this a mechanism rather than a
+story that fits:
 
 ```
 20:11:12.285  GET /deals/search?q=sush  (320ms)
@@ -112,6 +115,17 @@ and remembered in the cleared-box branch, where the token version is simply
 null. Reaching for the counter again because it worked last time is the failure
 mode worth naming here.
 
+**Where the counter is better, and it is not nowhere.** The `Future` is unique
+only because `DealRepo.search` is `async` and allocates one per call — a
+guarantee that lives in the repository, not in the controller that depends on
+it. If `search` ever memoised by query, which is a plausible optimisation for
+this screen and could be added by someone with no reason to open this file, two
+keystrokes for the same text would share a `Future`, `identical` would accept a
+stale answer, and the case that would break is the returned-to query this token
+was chosen for. A counter's uniqueness is enforced where it is used. That is one
+axis, it is real, and the decision here is that the naming and the
+cleared-box branch are worth it — not that the alternative had nothing.
+
 **Edge cases**
 - *Box cleared while a search is in flight.* The token is dropped, so the
   response is discarded. Before this it was written into `results` and only went
@@ -121,8 +135,31 @@ mode worth naming here.
   finishing first used to hide it while the user's answer was still coming. The
   cleared-box branch has to clear it explicitly, because after dropping the
   token no response is permitted to, and the screen checks `isLoading` first.
+- *`results` is knowingly stale between keystrokes.* It is not cleared when a
+  new search starts — doing so would flash an empty state on every letter — so
+  it holds the previous query's items until the new ones arrive. What keeps that
+  off the screen is the order of the checks in the view: `isLoading` is tested
+  before `results` (`search_screen.dart:24`). **The guarantee is display-level,
+  not state-level.** A change to that `Obx` — showing results under a small
+  inline spinner instead of replacing them, say — would reintroduce the reported
+  symptom without touching the controller. Recorded because it is a deliberate
+  trade, not an oversight, and because the next person to edit that `Obx` has no
+  way to know.
 - *A search that fails for a query the user has left.* Discarded before it can
-  log or touch the spinner.
+  log or touch the spinner. **Both error branches are unreachable against this
+  backend**, the same way `_page--` was in RES-104: `searchDeals`
+  (`fake_api_service.dart:95`) is a delay and a filter with no throw path, and
+  the `_rng` there only jitters latency. The test reaches them by injecting a
+  failure through the scripted repo, so the section should not read as though
+  error handling was exercised — it was constructed.
+- **Not handled, because it cannot happen:** a failure on the *live* request
+  logs and returns, which leaves `results` holding the previous query's items
+  with `hasSearched` true and `isLoading` false — the screen then shows results
+  that do not match the box, with no error state. That is this ticket's symptom
+  arriving by another route. If the endpoint could fail, that branch would need
+  `results.clear()` or an error state; adding one now would be inventing a
+  behaviour for a path that does not exist, which is the same call made for
+  `refreshDeals` in RES-104.
 - **Not handled, deliberately:** the request is not cancelled, only disowned.
   Dart `Future` has no cancellation, the work is a `Future.delayed` inside
   `fake_api_service.dart`, which this exercise forbids editing, and there is no
