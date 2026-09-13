@@ -1,7 +1,31 @@
 # Rescu — solutions
 
-Working notes for the assessment. Written as the work happens; sections for
-tickets not yet started say so rather than being pre-filled.
+Working notes for the assessment, written as the work happened. The summary
+below is the map; every row links to the section that argues it.
+
+## At a glance
+
+| | Status | Root cause, in one line | Evidence |
+|---|---|---|---|
+| [RES-101](#res-101--search-shows-results-for-the-wrong-query) · wrong search results | **fixed** | Responses are unordered and the last to land wins; the backend makes *shorter* queries slower, so a prefix reliably overwrites the full word. | `test/search_ordering_test.dart` (5) · on device |
+| [RES-102](#res-102--crash-after-leaving-my-orders) · `setState` after dispose | **fixed** | `Timer.periodic` started in `initState`, handle never kept, class has no `dispose` — it keeps ticking after the route pops. | `test/pickup_countdown_test.dart` (5) · on device 3/3 → 0/0 |
+| [RES-103](#res-103--requests-pile-up-the-longer-you-browse) · requests pile up | **fixed** | Each details screen registers an `ever()` worker on the session-long `CartService` and never disposes it; GetX does not do it for you. | on device: re-checks 4 → 1 |
+| [RES-104](#res-104--duplicate-deals-in-the-home-feed) · duplicate cards | **fixed** | `refreshDeals` resets the page counter without invalidating an in-flight `loadMore`, so the counter describes a list that no longer exists. | `test/home_paging_test.dart` (9) · ablation per guard · **not reproduced on device** |
+| [RES-105](#res-105--home-feed-is-janky-and-memory-keeps-climbing) · jank + memory | **fixed** | Three causes: an `Obx` around the whole `Scaffold` reading a per-frame scroll offset; `ListView(children:)` with 122 cards; 1600×1200 images decoded into 160 px slots. | profile mode, 2 devices, 5 builds: `BUILD` **2.682 → 0.091 ms**/frame |
+| [RES-106](#res-106--wrong-pickup-times-pickup-today-filter-misses-deals) · wrong pickup times | **fixed** | A UTC instant read field-wise (`.hour`, `.day`) without converting zone — the backend is correct. | `test/pickup_window_test.dart` (9) · on device |
+| [RES-107](#res-107--deep-link-opens-to-a-crash) · deep link crash | **fixed** | The controller only ever reads `Get.arguments`; a deep link carries the id but no object, so the cast hits null. | 4 entry paths on device, incl. deep link over an open deal |
+| [F-1](#f-1--live-flash-sale-countdowns) · live countdowns | **complete** | — | `test/flash_sale_countdown_test.dart` (13) + `test/cart_flash_expiry_test.dart` (5) · profile mode: `DealCard`/`Card`/`Scaffold`/`ListView` = **0 builds/s** · 8-minute real expiry run |
+| [F-2](#f-2--impression-tracking) · impression tracking | **not attempted** | — | Reasoning and a grounded estimate, in place of a half-built feature |
+| [F-3](#f-3--stock-reservations-with-optimistic-ui) · reservations | **decision only** | — | The underspecified expiry question answered and justified; no implementation |
+
+Also here: [findings logged but not fixed](#findings-logged-not-fixed) ·
+[AI usage log](#ai-usage-log) · [design questions](#design-questions) ·
+[time spent](#time-spent).
+
+**Totals** — 50 tests passing, `flutter analyze` clean, profile APK builds.
+Five of the seven fixes have a negative control; RES-104 and RES-105 also have
+an ablation per guard or per cause. Every performance number names the device
+it came from.
 
 Status legend: `not started` · `investigating` · `fixed` · `partial` · `not attempted`
 
