@@ -104,7 +104,7 @@ class HomeController extends GetxController {
     // reaches `refreshCompleted()`, which touches the header only
     // (`smart_refresher.dart:753`). Returning silently would leave the spinner
     // up for good, and because `_dispatchModeByOffset` bails while the mode is
-    // `loading` (`indicator_wrap.dart:466`) no later pull-up could recover it.
+    // `loading` (`indicator_wrap.dart:468`) no later pull-up could recover it.
     if (_isRefreshing) {
       refreshController.loadComplete();
       return;

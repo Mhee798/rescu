@@ -523,7 +523,7 @@ backend's 950 ms — to fix a defect they cannot see.
   header alone (`smart_refresher.dart:753`, whose `resetFooterState` defaults to
   false and in any case only handles `noData`). A silent return would leave the
   spinner up permanently, and `_dispatchModeByOffset` bails while the mode is
-  `loading` (`indicator_wrap.dart:466`), so no later pull-up could recover it.
+  `loading` (`indicator_wrap.dart:468`), so no later pull-up could recover it.
 
   The `_isFetchingMore` return next to it looks identical and needs nothing,
   because the load that set that flag reaches `loadComplete()` itself. An
