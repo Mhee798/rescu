@@ -33,6 +33,16 @@ void main() {
       expect(formatFlashRemaining(Duration.zero), isNull);
       expect(formatFlashRemaining(const Duration(seconds: -1)), isNull);
     });
+
+    test('rounds a part-second up, because the deal is still live', () {
+      // Truncating would read 00:00 on a deal that is still tappable.
+      expect(formatFlashRemaining(const Duration(milliseconds: 1)), '00:01');
+      expect(formatFlashRemaining(const Duration(milliseconds: 1500)), '00:02');
+      expect(
+          formatFlashRemaining(
+              const Duration(minutes: 59, seconds: 59, milliseconds: 500)),
+          '01:00:00');
+    });
   });
 
   // `flutter_test` fakes timers but not `DateTime.now()`, so pumping a second

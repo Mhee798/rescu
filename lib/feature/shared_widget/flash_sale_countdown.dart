@@ -7,12 +7,17 @@ import '../../service/clock_service.dart';
 ///
 /// Returns null past the end so callers can decide what an expired deal looks
 /// like rather than having a string forced on them.
+/// The seconds are rounded up rather than truncated. `endsAt` does not land on
+/// a tick boundary, so a sub-second remainder is the normal case at the end of
+/// a sale — and truncating it prints `00:00` while `ExpiryBuilder`, which flips
+/// at `now >= endsAt`, still has the deal live and its button enabled.
 String? formatFlashRemaining(Duration remaining) {
   if (remaining <= Duration.zero) return null;
   String two(int value) => value.toString().padLeft(2, '0');
-  final hours = remaining.inHours;
-  final minutes = remaining.inMinutes % 60;
-  final seconds = remaining.inSeconds % 60;
+  final total = (remaining.inMilliseconds / 1000).ceil();
+  final hours = total ~/ 3600;
+  final minutes = (total ~/ 60) % 60;
+  final seconds = total % 60;
   return hours > 0
       ? '${two(hours)}:${two(minutes)}:${two(seconds)}'
       : '${two(minutes)}:${two(seconds)}';
