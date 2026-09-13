@@ -93,6 +93,116 @@ void main() {
     });
   });
 
+  group('a feed-sized number of countdowns', () {
+    setUp(() {
+      clock = Get.put(ClockService(interval: const Duration(hours: 1)));
+      clock.nowRx.value = _start;
+    });
+    tearDown(Get.reset);
+
+    testWidgets('120 of them tick without rebuilding a single card',
+        (tester) async {
+      // The catalog only carries 14 flash deals, so the "100+ visible
+      // countdowns" the feature asks about cannot be produced from the real
+      // data, and `assets/data` is not editable. This builds the load instead.
+      const count = 120;
+      tester.view.physicalSize = const Size(800, 6000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      var listBuilds = 0;
+      final cardBuilds = List<int>.filled(count, 0);
+
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(builder: (context) {
+          listBuilds++;
+          return Column(
+            children: [
+              for (var i = 0; i < count; i++)
+                SizedBox(
+                  height: 40,
+                  child: Builder(builder: (context) {
+                    cardBuilds[i]++;
+                    // Stand-in for a card: some chrome that must not be
+                    // rebuilt, wrapped around the one live part.
+                    return Row(
+                      children: [
+                        const Icon(Icons.bolt),
+                        FlashSaleCountdown(
+                          endsAt: _start.add(Duration(seconds: 90 + i)),
+                        ),
+                      ],
+                    );
+                  }),
+                ),
+            ],
+          );
+        }),
+      ));
+
+      expect(listBuilds, 1);
+      expect(cardBuilds.every((builds) => builds == 1), isTrue);
+      expect(find.text('01:30'), findsOneWidget);
+
+      for (var second = 1; second <= 10; second++) {
+        advanceTo(Duration(seconds: second));
+        await tester.pump();
+      }
+
+      // Ten ticks across 120 live countdowns: every one of them is showing a
+      // new number, and neither the list nor any card was rebuilt. This is the
+      // property F-1 states, asserted directly rather than inferred from a
+      // frame time.
+      expect(find.text('01:20'), findsOneWidget);
+      // The last card: 90 + 119 seconds to begin with, ten of them gone.
+      expect(find.text('03:19'), findsOneWidget);
+      expect(listBuilds, 1, reason: 'the list must not rebuild on a tick');
+      expect(
+        cardBuilds.where((builds) => builds != 1).length,
+        0,
+        reason: 'no card may rebuild on a tick',
+      );
+    });
+
+    testWidgets('an expiring card rebuilds itself and no other',
+        (tester) async {
+      const count = 30;
+      tester.view.physicalSize = const Size(800, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final cardBuilds = List<int>.filled(count, 0);
+      await tester.pumpWidget(MaterialApp(
+        home: Column(
+          children: [
+            for (var i = 0; i < count; i++)
+              SizedBox(
+                height: 40,
+                // Only card 0 is about to expire.
+                child: ExpiryBuilder(
+                  endsAt: _start.add(Duration(seconds: i == 0 ? 2 : 600)),
+                  builder: (context, expired) {
+                    cardBuilds[i]++;
+                    return Text(expired ? 'Expired $i' : 'Live $i');
+                  },
+                ),
+              ),
+          ],
+        ),
+      ));
+      expect(cardBuilds.every((builds) => builds == 1), isTrue);
+
+      advanceTo(const Duration(seconds: 2));
+      await tester.pump();
+
+      expect(cardBuilds[0], 2);
+      expect(cardBuilds.skip(1).every((builds) => builds == 1), isTrue,
+          reason: 'one deal expiring must not disturb its neighbours');
+      expect(find.text('Expired 0'), findsOneWidget);
+      expect(find.text('Live 29'), findsOneWidget);
+    });
+  });
+
   group('ExpiryBuilder', () {
     setUp(() {
       clock = Get.put(ClockService(interval: const Duration(hours: 1)));
