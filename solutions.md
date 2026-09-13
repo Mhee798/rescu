@@ -1837,6 +1837,22 @@ reading the framework and package sources rather than recalling them, driving
 the profiling on device, writing the tests, and drafting these documents. No
 Copilot, no editor completion.
 
+**The working agreement it ran under** — the session was governed by a
+`CLAUDE.md` at the repo root: hard constraints (never touch
+`fake_api_service.dart` or `assets/data/`, no upgrades, no new dependencies),
+and a definition of done per ticket (reproduce, state the cause as a mechanism,
+fix the cause, write it up). Three commit messages cite it by section, so for
+anyone reading the history: **§3** is the list of fixes that are explicitly not
+acceptable — `if (mounted)` instead of cancelling the subscription, a
+`try/catch` that swallows the error, deduplicating at render time instead of
+fixing the write, a debounce where the problem is out-of-order responses;
+**§4** is "never report a bug fixed from reading code — say what was run and
+what was observed, and performance claims come from profile mode"; **§7** is the
+required shape of each section in this file, rejected alternatives included. The
+file itself is deliberately not committed: it is instructions to a tool, not
+part of the app, and this paragraph is the part of it a reader of the diff
+actually needs.
+
 **How it was used, honestly** — the useful part was never the code. Every fix
 here is small; what took the time was establishing that a cause was *the* cause,
 and the failure mode that recurs in the log below is the model producing a
