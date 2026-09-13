@@ -1,3 +1,13 @@
+Sittings are listed separately because the between-sitting spread is larger
+than the within-sitting spread on the fixed side: 0.631, 0.428 and 0.645 ms of
+`BUILD` per frame for identical code, against a control that reproduces to
+within 5 % both times. An earlier revision of this file published "9 → 4" from
+the first control sitting alone, which happened to be the worst of the two;
+re-measuring the shipped build against a fresh control gave 7 against 5 in that
+sitting, and pooling everything gives the figures above. Any single A/B here is
+worth about a factor of two of confidence, and that is the resolution the
+numbers are quoted at.
+
 # Rescu — solutions
 
 Working notes for the assessment. Written as the work happens; sections for
@@ -288,8 +298,9 @@ under Edge cases above.
 
 ## RES-105 · Home feed is janky and memory keeps climbing
 **Status** three causes found and fixed, verified against a negative control on
-a 2018 device: on the gesture that actually janks, dropped frames halve, a
-median of 9 per run to 4. One of the two symptoms in the ticket does not reproduce at
+a 2018 device: widget-build cost per frame falls about sixfold with no overlap
+between the two sides, and dropped frames halve on the median with overlapping
+ranges. One of the two symptoms in the ticket does not reproduce at
 all, and the worst case I found did not improve — both stated below rather than
 omitted.
 
@@ -578,36 +589,42 @@ person flicking the device, which is not reproducible. A fast scripted fling
 script) reproduces it and is repeatable. Three runs per build, all 122 deals
 loaded, P30 Pro:
 
-| | control (1 sitting) | fixed (2 sittings) |
+Six control runs and nine fixed runs, across three sittings, all 122 deals
+loaded, P30 Pro:
+
+| | control | fixed |
 |---|---|---|
-| frames over 16.7 ms, per run | 9, 9, 8 | 4, 4, 7 · 2, 0, 6 |
-| median per run | **9** | **4** |
-| `BUILD` per frame | 3.717 ms | 0.631 · **0.428** ms |
-| UI p90 | 9.84 ms | 8.89 · **6.25** ms |
-| raster p90 | 12.30 ms | 14.28 · 11.25 ms |
+| frames over 16.7 ms, per run | 9, 9, 8 · 7, 10, 5 | 4, 4, 7 · 2, 0, 6 · 5, 3, 9 |
+| median · range | **8.5** · 5–10 | **4** · 0–9 |
+| `BUILD` per frame, per sitting | 3.717 · 3.903 ms | 0.631 · 0.428 · **0.645** ms |
+| UI p90 | 9.84 · 10.12 ms | 8.89 · 6.25 · 9.16 ms |
+| raster p90 | 12.30 · 9.86 ms | 14.28 · 11.25 · 11.60 ms |
 
-**Dropped frames roughly halve — 9 per run to 4.** That is the user-visible
-claim, and it is the only measurement here taken on a gesture that actually
-janks.
+**`BUILD` per frame falls about sixfold and the two sides do not overlap at
+all** — every control sitting is above 3.7 ms, every fixed sitting below 0.65.
+That is the claim this fix can carry.
 
-The fixed side is given as two separate sittings on purpose. The first
-(4, 4, 7) was taken immediately after the control; the second (2, 0, 6) came
-an hour later while checking something else, and its `BUILD` per frame,
-0.428 ms, disagrees with the first sitting's 0.631 ms by 50 %. The control's
-three runs agree with each other to within 5 %, so the instability is on the
-fixed side and between sittings rather than within them — most likely thermal
-state or how much of the disk image cache was warm. The conclusion survives
-because the worst fixed run, 7, is still below the best control run, 8, but
-the honest resolution of this measurement is "roughly halves", not a
-two-significant-figure ratio.
+**Dropped frames halve on the median, 8.5 to 4, but the ranges overlap** — the
+worst fixed run dropped nine frames, more than four of the six control runs.
+With three runs per sitting the honest statement is a factor of about two on
+typical behaviour, not a reliable ceiling.
 
-Two honest qualifications. Raster p90 moves the *wrong* way, 12.30 → 14.28 ms,
-and the fixed build renders more frames in the same window — the UI thread
-keeping up means more frames reach the rasteriser, so the raster thread gets
-busier. And `BUILD` per frame is 0.631 ms here against 0.045 ms on the gentle
-swipe, because a fast fling pulls far more cards into the viewport and that
-build work is real rather than redundant. The fix removes the waste; it does not
-make a fling free, and fifteen frames are still dropped.
+Sittings are listed separately because the between-sitting spread is larger
+than the within-sitting spread on the fixed side: 0.631, 0.428 and 0.645 ms of
+`BUILD` per frame for identical code. An earlier revision of this file published
+"9 → 4" from the first control sitting alone, which happened to be the worse of
+the two; re-measuring the shipped build against a fresh control gave 7 against 5
+in that sitting, and pooling everything gives the figures above. Any single A/B
+here is worth about a factor of two of confidence, and that is the resolution
+these numbers are quoted at.
+
+Two honest qualifications. Raster p90 does not improve and in two of the three
+fixed sittings is worse — the UI thread keeping up means more frames reach the
+rasteriser, so that thread gets busier. And `BUILD` per frame is around 0.6 ms
+here against 0.045 ms on the gentle swipe, because a fast fling pulls far more
+cards into the viewport and that build work is real rather than redundant. The
+fix removes the waste; it does not make a fling free, and a typical fling still
+drops about four frames.
 
 *What is left.* Two candidates were considered for the frames that still drop,
 and both were checked rather than left as speculation.
