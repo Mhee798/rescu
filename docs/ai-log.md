@@ -480,3 +480,44 @@ by grepping the source for the probe marker (0) and the fix's own identifier
 (6). Rule: use a throwaway copy for ablations, not the index; and when a file
 has been temporarily replaced for measurement, check `git status` before the
 next commit rather than after.
+### 2026-09-13 · RES-104 (a guard that hangs the thing it guards)
+**Suggested:** The `_isRefreshing` guard I added to `loadMore` returned early,
+matching the `_isFetchingMore` return directly above it. I wrote in
+`solutions.md` that the resulting footer-state problem "was true of the existing
+`_isFetchingMore` guard before this change", filed it under deliberately not
+handled, and moved on.
+
+**Why it was wrong:** The two returns are not equivalent, and the difference is
+the whole point. SmartRefresher puts the footer into `LoadStatus.loading` before
+calling `onLoading`, and only `loadComplete`/`loadNoData`/`loadFailed` move it
+out. The load that set `_isFetchingMore` reaches `loadComplete()` on its own way
+out, so that return is self-healing. `refreshDeals` reaches only
+`refreshCompleted()`, which touches the header
+(`smart_refresher.dart:753`) — so my return left the spinner up for good, and
+because `_dispatchModeByOffset` bails while the mode is `loading`
+(`indicator_wrap.dart:466`), pull-up would have been dead for the rest of the
+session. I introduced a hang and then documented it as pre-existing.
+
+**How it was caught:** A code review, which read the package source rather than
+the diff. The seven ordering tests could not have caught it: every assertion was
+about `deals` and the page counter, and the refresh controller was a sink. A
+guard that returns early is only correct if everything it skipped is either
+unnecessary or done by someone else, and nothing in the suite could tell those
+two apart.
+
+**Done instead:** `loadComplete()` before the return, plus the first two tests
+in that file to assert on `footerStatus`. Getting them to run took two more
+mistakes worth keeping: `seed()` awaits a zero-duration `Future`, which never
+resolves inside `testWidgets`'s FakeAsync, so the test *hung* — and I read the
+suite's trailing line as a pass twice before noticing it never said "All tests
+passed". Then, with that fixed, both cases still failed: `loadComplete()` defers
+to a post-frame callback and `tester.pump()` produces no frame unless one is
+already scheduled, so the callback never ran. `tester.binding.scheduleFrame()`
+first. Both of those would have made the test lie in the safe direction — a
+false failure — but the FakeAsync one cost twenty minutes because a hang reads
+like a slow pass.
+
+The lesson that generalises: an early return is a claim that the work being
+skipped does not matter, and that claim needs its own assertion. The list was
+tested exhaustively for orderings and the one thing the user actually looks at
+was not tested at all.
