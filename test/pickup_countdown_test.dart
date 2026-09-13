@@ -60,8 +60,12 @@ void main() {
       DateTime.now().add(const Duration(minutes: 5, milliseconds: 500)),
     );
 
-    // The format is pinned exactly, because F-1 replaces this widget and has to
-    // keep producing mm:ss. The value allows one second of drift for a slow run.
+    // The format is pinned exactly so a later edit cannot quietly change what
+    // an order screen says. An earlier version of this comment claimed F-1
+    // would replace this widget; it does not — F-1 is the flash-sale
+    // countdown, a different widget on different screens reading
+    // `flashSaleEndsAt`, and this one stays as the pickup-window clock. The
+    // value allows one second of drift for a slow run.
     expect(shownText(tester), matches(RegExp(r'^Opens in \d{2}:\d{2}$')));
     expect(shownText(tester), anyOf('Opens in 05:00', 'Opens in 04:59'));
   });
