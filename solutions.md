@@ -645,6 +645,13 @@ is **2.8× more images resident for the same memory**, which is fewer evictions
 and fewer re-decodes on the same scroll — not a smaller footprint. No reduction
 in memory is claimed.
 
+**Root cause** Three of them, and the ticket says so — "There is more than one
+contributing cause". Each is stated as a mechanism below, with a measured
+improvement attributed to it separately further down: ① one `Obx` around the
+whole `Scaffold` reading a value written every frame, ② the feed constructing
+every card on every rebuild, ③ every image decoded at 1600×1200 whatever slot
+it lands in.
+
 ### Cause 1 — one `Obx` around the whole `Scaffold`, reading a value written every frame
 
 `HomeScreen.build` wrapped the entire `Scaffold` in a single `Obx` whose first
@@ -1599,14 +1606,34 @@ announces is in the log above and the publishing of it is covered by
 `test/cart_flash_expiry_test.dart`.
 
 ## F-2 · Impression tracking
-**Status** not started
+**Status** not attempted. Nothing was started and nothing is half-written; this
+section exists to say so and to record what the work would be, because "honesty
+about what is unfinished" is one of the four things the grading notes list.
 
-**Requirement** `deal_impression` at ≥50% visible for ≥1 continuous second, once per deal per app session across all screens, batched at 10 events or 15s since the first unsent event, no scroll regression.
+**Requirement** `deal_impression` at ≥50 % visible for ≥1 *continuous* second,
+once per deal per app session across all screens, batched at 10 events or 15 s
+since the first unsent event, without regressing scrolling.
 
-**Design** —
-**Alternative rejected** —
-**Edge cases** —
-**Evidence** —
+**Why not this one.** The grading notes say a complete, profiled F-1 beats three
+half-done features, and with the time left that is what a third feature would
+have become. F-2 is first in the one-more-day list below.
+
+**What I looked at before setting it aside**, so the estimate is not a guess:
+`visibility_detector` is in `pubspec.yaml` and used nowhere yet;
+`AnalyticsService.logEvent` and `FakeApiService.sendAnalyticsBatch` both exist
+and neither is wired to the other. So the plumbing is present and the substance
+is entirely in the conditions:
+
+- *"≥1 continuous second"* needs a per-card timer that is cancelled the moment
+  the card falls below the threshold or is scrolled away — a hundred instances
+  of RES-102's exact shape. `ClockService` and `ExpiryBuilder` from F-1 are the
+  wrong fit here: this is a per-card duration, not a shared deadline.
+- *"once per deal per session across all screens"* has to be a set on a service.
+  On a controller it resets with the route, and the feed, the flash rail and
+  search would each report the same deal.
+- *"10 events **or** 15 s since the first unsent event"* is not a periodic
+  flush. The window opens when an empty buffer receives its first event and
+  closes on whichever condition arrives first.
 
 ## F-3 · Stock reservations with optimistic UI
 **Status** not implemented — deliberately. The decision the task singles out is
