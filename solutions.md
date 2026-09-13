@@ -15,15 +15,19 @@ Everything below was verified on 2026-09-12, not assumed.
 |---|---|
 | Flutter | **3.27.0** via fvm (`.fvmrc`) — `fvm flutter` for every command |
 | Dart VM of the running app | 3.6.0 (stable), `android_arm64` — confirmed via `getVM` on the live VM service |
-| Test device | PTP N49 · **SoC SM8750** · Android 16 (API 36) |
+| Test device 1 | PTP N49 (Honor Magic7 Pro) · Snapdragon 8 Elite **SM8750**, 2024 · Android 16 (API 36) · 60/90/120 Hz · 12 GB (`MemTotal` 11,502,928 kB) |
+| Test device 2 | ELE-L29 (Huawei P30 Pro) · **Kirin 980**, 2018 · Android 10 (API 29) · 60 Hz · 8 GB (`MemTotal` 7,789,116 kB) — added the same evening, see below |
 | Baselines | `docs/baseline/flutter-analyze.txt` (no issues), `docs/baseline/flutter-test.txt` (1/1 pass), `docs/baseline/home-first-run.png` |
 
-**Caveat that matters for RES-105.** `SM8750` is a Snapdragon 8 Elite — flagship
-class, not the "mid-range Android" the ticket describes. Frame drops may be
-weaker here or absent; the memory growth should still reproduce since that is a
-retention problem rather than a throughput one. All performance numbers in this
-file state the device they came from, and no claim is made that they generalise
-to the hardware in the ticket.
+**Caveat that mattered for RES-105, and what was done about it.** The first
+device is a Snapdragon 8 Elite — flagship class, not the "mid-range Android"
+RES-105 is written about. It cleared the feed too fast to show the symptom, so a
+second, 2018 handset was added on the evening of 09-12 and the ticket's frame
+numbers come from it. Both devices are kept, because the gap between them is
+part of the finding: the structural defects are identical on both and only the
+older one turns them into a frame-time cost. Full specs, procedure and raw
+captures in [`docs/res-105/baseline.md`](docs/res-105/baseline.md). Every
+performance figure in this file names the device it came from.
 
 There is a second Flutter (3.47.2) first on `PATH` at
 `~/Documents/flutter`. It is not used for anything here.
@@ -1832,10 +1836,10 @@ appended to as the work happened rather than reconstructed at the end. The two
 that cost the most time are lifted below in full.
 
 **Tools used** — Claude Code (Opus 5) in the terminal, with access to the repo,
-to `adb`, and to the VM Service on a live device. One tool, used for everything:
-reading the framework and package sources rather than recalling them, driving
-the profiling on device, writing the tests, and drafting these documents. No
-Copilot, no editor completion.
+to `adb`, and to the VM Service on a live device. It did the work in this
+repo end to end: reading the framework and package sources rather than recalling
+them, driving the profiling on device, writing the tests, and drafting these
+documents.
 
 **The working agreement it ran under** — the session was governed by a
 `CLAUDE.md` at the repo root: hard constraints (never touch
@@ -2076,6 +2080,8 @@ negative control, and several have an ablation per guard.
 4. **The footer state left spinning** when a load is suppressed by a guard, and
    the missing error handling on `refreshDeals` — both logged, both small, both
    deliberately out of their tickets' scope.
-5. **A second slow device.** Every performance figure here comes from one
-   2018 handset. The RES-105 numbers would be worth more with a second point on
-   the curve.
+5. **A second *slow* device.** The cross-device comparison has a 2024 flagship
+   and a 2018 handset, which is a wide gap and only two points; every figure
+   that shows the jank the ticket describes comes from the one old device. A
+   genuinely mid-range current phone would say more about who is actually
+   affected than another flagship would.
