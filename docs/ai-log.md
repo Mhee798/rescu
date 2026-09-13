@@ -605,3 +605,55 @@ variant was built, compiles, passes four of five cases and fails the A-B-A one
 with `Expected: <3> Actual: <1>`. That case exists in the suite specifically to
 keep the design decision testable. Both rejected options are in `solutions.md`
 with that reasoning.
+### 2026-09-13 · F-1 (a Worker that will not let go when asked)
+**Suggested:** `ExpiryBuilder` subscribes to the clock and must stop once the
+deal has expired, so the callback disposed its own `Worker` and then called
+`setState`. That reads as obviously correct — finish, tidy up, notify — and the
+widget's behaviour looked right on the first two ticks.
+
+**Why it was wrong:** A `Worker` cannot be disposed from inside its own
+callback, not immediately. `Worker.dispose` calls the subscription's `cancel`,
+which calls `GetStream.removeSubscription`, which checks `_isBusy` and — when
+the stream is mid-notification, which is precisely when a worker callback runs —
+defers the removal behind `await Future.delayed(Duration.zero)`
+(`get_stream.dart:21-27`). The listener survives at least one more tick. It also
+leaves that zero-duration future outstanding, which `flutter_test` reports as a
+pending timer, so the test fails for a second, unrelated-looking reason.
+
+**How it was caught:** A test asserting the build count, which expected 2 and
+got 3. Printing the clock at each build put the extra one six seconds past
+expiry, which no amount of reading the widget would have suggested. The
+`flutter_test` stack trace then named the line: `GetStream.removeSubscription`
+creating a `FakeTimer` from inside my own callback.
+
+**Done instead:** The callback does not dispose itself. Correctness rests on a
+`_expired` flag checked first, so it no longer matters when the removal lands;
+`dispose()` does the cleanup, where the stream is idle and removal is immediate.
+The general point is one this log keeps circling: "dispose it when you are done
+with it" is a statement about a library's timing, not a self-evident truth, and
+the only way I found out was by counting something.
+
+### 2026-09-13 · F-1 (the same clock lesson, twice)
+**Suggested:** The countdown and the expiry check both read `DateTime.now()`.
+The widget tests pumped a second at a time and asserted the text changed.
+
+**Why it was wrong:** `flutter_test` fakes timers but not the wall clock. Pumping
+fires the periodic ticker and then the callback assigns the *real* `DateTime.now()`,
+which has barely moved, so the countdown stayed on `00:03` and nothing ever
+expired. I had written this exact fact into `pickup_countdown_test.dart` during
+RES-102 — "`tester.pump` advances FakeAsync's clock… but the widget derives
+`remaining` from `DateTime.now()`, which flutter_test does not fake" — and then
+built a new feature on top of the same assumption.
+
+**How it was caught:** Four of the first six tests failed at once, all on
+unchanged text.
+
+**Done instead:** Both widgets read the time from `ClockService` rather than
+calling `DateTime.now()`, and the tests drive the published value with a ticker
+interval long enough that it never overwrites them. That is better in
+production too, and the reason is not the test: the countdown on screen and the
+decision that it has expired now come from the same instant, so a card cannot
+read `00:01` while its own expiry has already fired.
+
+Writing a lesson down is not the same as having somewhere it gets applied. The
+note that would have caught this was one file away, in a test I wrote myself.
