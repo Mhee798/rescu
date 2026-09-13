@@ -130,6 +130,17 @@ confirmed by reproduction before either goes into this file's RES-104 section.
 Lesson kept: when a detail does not fit the story being told, the first move is
 to check whether the story is too narrow, not to drop the detail.
 
+**Correction, 2026-09-13, after reproducing RES-104.** Calling `_page--` "a
+real second defect" was too strong, and the deferral above is the only reason
+it did not reach `solutions.md` that way. The rollback is unreachable in this
+app: `getDeals` never throws, and `_rng` in `fake_api_service.dart` is used only
+for latency and search breadth. It is a latent path, and the ticket's live cause
+is the single one — a counter left describing a list it no longer matches. The
+fix deletes the rollback anyway rather than leaving it armed, and the test that
+covers it has to inject a failure through the scripted repo to reach it. Two
+sessions agreeing on a mechanism is not the same as either of them checking
+whether it can run.
+
 ### 2026-09-12 · RES-107
 **Suggested:** Before reproducing, the assistant predicted the two deep-link
 entry points would behave like this: because `GetMaterialApp` is given an
@@ -418,3 +429,52 @@ two screens I had never opened. My comment said "all three call sites"; there
 are five. Fixed and verified on device. The pattern there is plainer: I
 enumerated the call sites from the ones I had been thinking about rather than
 from `grep`.
+
+
+### 2026-09-13 · RES-104 (three guards, and only one of them was doing anything)
+**Suggested:** The RES-104 fix added a generation counter checked in both
+writers, an `_isRefreshing` flag, and moved the page counter to advance only
+after a successful response. Seven scripted-ordering tests passed, four of them
+failing against the pre-fix controller. That is the shape of a finished ticket.
+
+**Why it was wrong:** It was not wrong, but three quarters of it was unjustified.
+Removing each guard in turn to check it was load-bearing — the habit taken from
+the FAB `ValueKey`s that turned out to be decoration — showed that only
+`_isRefreshing` broke anything. The two generation checks and the deferred
+counter could all be deleted with the suite still green. I had written three
+guards and tested one.
+
+**How it was caught:** The ablation, run because of the previous entry rather
+than because anything looked wrong. The reason the tests could not see the other
+two is worth more than the finding: two responses for the same page are
+identical, so a stale one being written over a newer one leaves no trace in the
+list. There was nothing to assert on.
+
+**Done instead:** The scripted repo now varies `totalPages` per response, which
+makes "which response won" observable through `hasMore`, and two cases were
+added for the orderings only the generation checks cover. A third injects a
+failed request, which is the only way to reach the counter rollback. All four
+guards then ablate to a failure. The rule: if a guard cannot be removed to make
+a test fail, either it does not belong in the diff or the test cannot see what
+it does — and the second is worth a few minutes before assuming the first.
+
+### 2026-09-13 · RES-104 (a stash that silently staged a revert)
+**Suggested:** To measure the test suite against the unfixed controller I used
+`git stash push` on the one file, ran the suite, and `git stash pop`ped it back.
+The suite behaved as expected and I moved on.
+
+**Why it was wrong:** The pop left the index holding the *pre-fix* version:
+`git status` read `MM`, staged showing "11 insertions, 38 deletions" — which is
+the RES-104 fix being removed — on top of an unstaged debug probe. Any `git
+commit` at that point, for any reason, would have quietly reverted the fix and
+committed a temporary probe alongside it.
+
+**How it was caught:** Answering "is RES-104 done" by running `git status`
+rather than by recalling what I had done. The tests were green the whole time,
+because they run against the working tree, not the index.
+
+**Done instead:** `git restore --staged --worktree` on the file, then verified
+by grepping the source for the probe marker (0) and the fix's own identifier
+(6). Rule: use a throwaway copy for ablations, not the index; and when a file
+has been temporarily replaced for measurement, check `git status` before the
+next commit rather than after.
