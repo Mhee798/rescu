@@ -1562,8 +1562,41 @@ twenty `Text` builds across five ticks is one per countdown per second, and
 nothing above them moved. `FlashSaleCountdown` itself reports zero builds
 because only its inner `Obx` rebuilds, which is the point.
 
-*Behaviour, on device* — the details screen for deal 5 renders
-`⚡ Flash sale ends in 07:40`, counting down.
+*Scrolling, before and after the feature* — same device, same session, three
+scripted swipes per side, widget-build tracking **off** so the numbers are
+free-running. Control is the commit before the first F-1 commit:
+
+| | before F-1 | with F-1 |
+|---|---|---|
+| `BUILD` per frame | 0.086 ms | 0.069 ms |
+| UI p90 | 2.86 ms | 2.85 ms |
+| raster p50 | 6.97 ms | 4.99 ms |
+| raster p90 | 11.58 ms | 6.86 ms |
+| frames over 16.7 ms | 0, 1, 0 | 0, 0, 0 |
+
+**No regression**, which is the claim. The F-1 side reads slightly *better*,
+which adding four live countdowns cannot cause — that is session drift, of the
+size RES-105 measured when identical code varied by 50 % on this metric between
+sittings. The figure that matters is UI p90 at 2.86 against 2.85 and nothing
+over budget on either side.
+
+*Behaviour, on device* — end to end on the Huawei P30 Pro, one run, no refresh
+(a refresh restarts the server's clock):
+
+- The details screen for deal 5 renders `⚡ Flash sale ends in 07:40`, counting
+  down. Added to the bag at 21:47:38.
+- At **21:54:25** the console logs `cart: dropped 5, flash sale ended` — eight
+  minutes after the deal was fetched, which is its `flashSaleMinutes`.
+- The flash rail tile for *Last-call Bakery Box* now reads **Expired** in grey
+  and does not respond to a tap, while *Mystery Thai Feast* beside it is still
+  counting at `16:04`.
+- The bag is empty.
+
+Screenshots: `docs/f-1/01-details-countdown.png`,
+`02-rail-expired.png`, `03-bag-after-expiry.png`. The notice itself is not in
+them — it lasts three seconds and the capture was later; the removal it
+announces is in the log above and the publishing of it is covered by
+`test/cart_flash_expiry_test.dart`.
 
 ## F-2 · Impression tracking
 **Status** not started
