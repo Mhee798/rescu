@@ -1,13 +1,3 @@
-Sittings are listed separately because the between-sitting spread is larger
-than the within-sitting spread on the fixed side: 0.631, 0.428 and 0.645 ms of
-`BUILD` per frame for identical code, against a control that reproduces to
-within 5 % both times. An earlier revision of this file published "9 → 4" from
-the first control sitting alone, which happened to be the worst of the two;
-re-measuring the shipped build against a fresh control gave 7 against 5 in that
-sitting, and pooling everything gives the figures above. Any single A/B here is
-worth about a factor of two of confidence, and that is the resolution the
-numbers are quoted at.
-
 # Rescu — solutions
 
 Working notes for the assessment. Written as the work happens; sections for
