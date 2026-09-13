@@ -99,18 +99,30 @@ class FlashDealsSection extends StatelessWidget {
                                             : Colors.red.shade50,
                                         borderRadius: BorderRadius.circular(4),
                                       ),
+                                      // Once the sale is over the label is
+                                      // fixed, so the live countdown comes out
+                                      // rather than staying mounted printing
+                                      // the same word: its `Obx` is subscribed
+                                      // to the clock and would rebuild every
+                                      // second, for every expired tile, for as
+                                      // long as the rail is on screen.
                                       child: deal.flashSaleEndsAt == null
                                           ? const SizedBox.shrink()
-                                          : FlashSaleCountdown(
-                                              endsAt: deal.flashSaleEndsAt!,
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w600,
-                                                color: expired
-                                                    ? Colors.grey.shade600
-                                                    : Colors.red.shade700,
-                                              ),
-                                            ),
+                                          : expired
+                                              ? Text('Expired',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.grey.shade600,
+                                                  ))
+                                              : FlashSaleCountdown(
+                                                  endsAt: deal.flashSaleEndsAt!,
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.red.shade700,
+                                                  ),
+                                                ),
                                     ),
                                   ],
                                 ),

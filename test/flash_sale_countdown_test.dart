@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:rescu/feature/shared_widget/expiry_builder.dart';
+import 'package:rescu/feature/home/widget/flash_deals_section.dart';
+import 'package:rescu/feature/shared_widget/deal_card.dart';
 import 'package:rescu/feature/shared_widget/flash_sale_countdown.dart';
+import 'package:rescu/model/deal_model.dart';
+import 'package:rescu/model/pickup_window_model.dart';
 import 'package:rescu/service/clock_service.dart';
 
 /// Tests for F-1's two halves: the text that changes every second, and the
@@ -281,8 +285,78 @@ void main() {
       expect(expiredCallbacks, 0);
     });
   });
+
+  group('an expired tile', () {
+    setUp(() {
+      clock = Get.put(ClockService(interval: const Duration(hours: 1)));
+      clock.nowRx.value = _start;
+    });
+    tearDown(Get.reset);
+
+    // Both surfaces that show a countdown have to take it back out at the
+    // crossing, not leave it mounted printing the same word. A mounted
+    // `FlashSaleCountdown` is subscribed to the clock, so it rebuilds once a
+    // second for as long as the tile is on screen — which would make F-1's
+    // "the per-second rebuild stops at the badge" false for expired deals.
+    // The device measurement had four live countdowns and no expired ones, so
+    // this case is only covered here.
+    testWidgets('drops its countdown in the flash rail', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: FlashDealsSection(
+            deals: [_deal(1, endsAt: _start.add(const Duration(seconds: 2)))],
+          ),
+        ),
+      ));
+      expect(find.byType(FlashSaleCountdown), findsOneWidget);
+
+      advanceTo(const Duration(seconds: 2));
+      await tester.pump();
+      expect(find.byType(FlashSaleCountdown), findsNothing);
+      expect(find.text('Expired'), findsOneWidget);
+    });
+
+    testWidgets('drops its countdown in the feed card', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: DealCard(
+            deal: _deal(1, endsAt: _start.add(const Duration(seconds: 2))),
+          ),
+        ),
+      ));
+      expect(find.byType(FlashSaleCountdown), findsOneWidget);
+
+      advanceTo(const Duration(seconds: 2));
+      await tester.pump();
+      expect(find.byType(FlashSaleCountdown), findsNothing);
+      expect(find.text('EXPIRED'), findsOneWidget);
+    });
+  });
 }
 
 /// A fixed instant so every expectation in this file is exact rather than
 /// "within a second".
 final DateTime _start = DateTime(2026, 9, 13, 12);
+
+DealModel _deal(int id, {DateTime? endsAt}) => DealModel(
+      id: id,
+      name: 'deal $id',
+      description: '',
+      imageUrl: 'https://example.invalid/$id.jpg',
+      originalPrice: 10,
+      price: 5,
+      currencyCode: 'THB',
+      quantityLeft: 9,
+      storeId: 1,
+      storeName: 'store',
+      storeAddress: 'address',
+      lat: 0,
+      lng: 0,
+      rating: null,
+      tags: const [],
+      pickupWindow: PickupWindowModel(
+        start: DateTime.utc(2026, 1, 1, 1),
+        end: DateTime.utc(2026, 1, 1, 3),
+      ),
+      flashSaleEndsAt: endsAt,
+    );
